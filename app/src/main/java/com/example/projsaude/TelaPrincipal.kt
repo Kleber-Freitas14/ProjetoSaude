@@ -20,7 +20,10 @@ private val AzulPrincipal = Color(0xFF085DD3)
 fun TelaPrincipal(
     aoSair: () -> Unit,
     aoAbrirPacientes: () -> Unit,
-    aoAbrirConsultas: () -> Unit
+    aoAbrirConsultas: () -> Unit,
+    aoAbrirProcedimentos: () -> Unit,
+    aoAbrirOrcamentos: () -> Unit,
+    aoAbrirMedicos: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -48,8 +51,9 @@ fun TelaPrincipal(
 
         BotaoMenu("Pacientes", aoAbrirPacientes)
         BotaoMenu("Consultas", aoAbrirConsultas)
-        BotaoMenu("Procedimentos") {}
-        BotaoMenu("Orçamentos") {}
+        BotaoMenu("Procedimentos", aoAbrirProcedimentos)
+        BotaoMenu("Orçamentos",  aoAbrirOrcamentos)
+        BotaoMenu( "Médicos", aoAbrirMedicos)
 
         Spacer(modifier = Modifier.weight(1f))
 

@@ -29,6 +29,7 @@ class MainActivity : ComponentActivity() {
                     color = Color.White
                 ) {
                     when (telaAtual) {
+
                         "inicio" -> TelaInicial(
                             aoAcessar = {
                                 telaAtual = "login"
@@ -48,16 +49,27 @@ class MainActivity : ComponentActivity() {
                             aoSair = {
                                 telaAtual = "inicio"
                             },
+                            aoAbrirPacientes = {
+                                telaAtual = "pacientes"
+                            },
                             aoAbrirConsultas = {
                                 telaAtual = "consultas"
                             },
-                            aoAbrirPacientes = {
-                                telaAtual = "pacientes"
+                            aoAbrirProcedimentos = {
+                                telaAtual = "procedimentos"
+                            },
+                            aoAbrirOrcamentos = {
+                                telaAtual = "orcamentos"
+                            },
+                            aoAbrirMedicos = {
+                                telaAtual = "medicos"
                             }
                         )
 
                         "consultas" -> TelaConsultas(
-                            aoVoltar = { telaAtual = "principal" }
+                            aoVoltar = {
+                                telaAtual = "principal"
+                            }
                         )
 
                         "pacientes" -> TelaPacientes(
@@ -65,6 +77,22 @@ class MainActivity : ComponentActivity() {
                                 telaAtual = "principal"
                             }
                         )
+
+                        "procedimentos" -> TelaProcedimentos(
+                            aoVoltar = {
+                                telaAtual = "principal"
+                            }
+                        )
+                        "orcamentos" -> TelaOrcamentos(
+                            aoVoltar = {telaAtual = "principal"
+                            }
+                        )
+                        "medicos" -> TelaMedicos (
+                            aoVoltar = {
+                                telaAtual = "principal"
+                            }
+                        )
+
                     }
                 }
             }
