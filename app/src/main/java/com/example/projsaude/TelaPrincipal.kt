@@ -9,15 +9,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
 
 private val AzulPrincipal = Color(0xFF085DD3)
 
+
 @Composable
 fun TelaPrincipal(
-    aoSair: () -> Unit
+    aoSair: () -> Unit,
+    aoAbrirPacientes: () -> Unit,
+    aoAbrirConsultas: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -43,21 +46,10 @@ fun TelaPrincipal(
 
         Spacer(modifier = Modifier.height(32.dp))
 
-        BotaoMenu("Pacientes") {
-            // Próxima etapa
-        }
-
-        BotaoMenu("Consultas") {
-            // Próxima etapa
-        }
-
-        BotaoMenu("Procedimentos") {
-            // Próxima etapa
-        }
-
-        BotaoMenu("Orçamentos") {
-            // Próxima etapa
-        }
+        BotaoMenu("Pacientes", aoAbrirPacientes)
+        BotaoMenu("Consultas", aoAbrirConsultas)
+        BotaoMenu("Procedimentos") {}
+        BotaoMenu("Orçamentos") {}
 
         Spacer(modifier = Modifier.weight(1f))
 
@@ -86,9 +78,6 @@ private fun BotaoMenu(
             containerColor = AzulPrincipal
         )
     ) {
-        Text(
-            text = titulo,
-            fontSize = 18.sp
-        )
+        Text(text = titulo, fontSize = 18.sp)
     }
 }

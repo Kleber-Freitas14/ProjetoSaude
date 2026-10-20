@@ -20,7 +20,6 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             ProjSaudeTheme {
-
                 var telaAtual by remember {
                     mutableStateOf("inicio")
                 }
@@ -30,7 +29,6 @@ class MainActivity : ComponentActivity() {
                     color = Color.White
                 ) {
                     when (telaAtual) {
-
                         "inicio" -> TelaInicial(
                             aoAcessar = {
                                 telaAtual = "login"
@@ -49,6 +47,22 @@ class MainActivity : ComponentActivity() {
                         "principal" -> TelaPrincipal(
                             aoSair = {
                                 telaAtual = "inicio"
+                            },
+                            aoAbrirConsultas = {
+                                telaAtual = "consultas"
+                            },
+                            aoAbrirPacientes = {
+                                telaAtual = "pacientes"
+                            }
+                        )
+
+                        "consultas" -> TelaConsultas(
+                            aoVoltar = { telaAtual = "principal" }
+                        )
+
+                        "pacientes" -> TelaPacientes(
+                            aoVoltar = {
+                                telaAtual = "principal"
                             }
                         )
                     }
