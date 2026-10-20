@@ -23,7 +23,8 @@ fun TelaPrincipal(
     aoAbrirConsultas: () -> Unit,
     aoAbrirProcedimentos: () -> Unit,
     aoAbrirOrcamentos: () -> Unit,
-    aoAbrirMedicos: () -> Unit
+    aoAbrirMedicos: () -> Unit,
+    aoAbrirOpme: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -54,6 +55,7 @@ fun TelaPrincipal(
         BotaoMenu("Procedimentos", aoAbrirProcedimentos)
         BotaoMenu("Orçamentos",  aoAbrirOrcamentos)
         BotaoMenu( "Médicos", aoAbrirMedicos)
+        BotaoMenu("OPME", aoAbrirOpme)
 
         Spacer(modifier = Modifier.weight(1f))
 

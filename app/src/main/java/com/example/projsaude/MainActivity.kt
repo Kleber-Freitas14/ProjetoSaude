@@ -20,6 +20,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             ProjSaudeTheme {
+
                 var telaAtual by remember {
                     mutableStateOf("inicio")
                 }
@@ -31,8 +32,11 @@ class MainActivity : ComponentActivity() {
                     when (telaAtual) {
 
                         "inicio" -> TelaInicial(
-                            aoAcessar = {
+                            aoAcessarColaborador = {
                                 telaAtual = "login"
+                            },
+                            aoAcessarPaciente = {
+                                telaAtual = "cadastroPaciente"
                             }
                         )
 
@@ -63,6 +67,35 @@ class MainActivity : ComponentActivity() {
                             },
                             aoAbrirMedicos = {
                                 telaAtual = "medicos"
+                            },
+                            aoAbrirOpme = {
+                                telaAtual = "opme"
+                            }
+                        )
+
+                        "cadastroPaciente" -> TelaCadastroPaciente(
+                            aoVoltar = {
+                                telaAtual = "inicio"
+                            },
+                            aoEnviar = {
+                                telaAtual = "acompanhamentoPaciente"
+                            }
+                        )
+
+                        "acompanhamentoPaciente" -> {
+                            TelaCadastroPaciente(
+                                aoVoltar = {
+                                    telaAtual = "inicio"
+                                },
+                                aoEnviar = {
+                                    telaAtual = "inicio"
+                                }
+                            )
+                        }
+
+                        "acompanhemntoPaciente" -> TelaAcompanhamentoPaciente (
+                            aoVoltar = {
+                                telaAtual = "inicio"
                             }
                         )
 
@@ -83,16 +116,24 @@ class MainActivity : ComponentActivity() {
                                 telaAtual = "principal"
                             }
                         )
+
                         "orcamentos" -> TelaOrcamentos(
-                            aoVoltar = {telaAtual = "principal"
-                            }
-                        )
-                        "medicos" -> TelaMedicos (
                             aoVoltar = {
                                 telaAtual = "principal"
                             }
                         )
 
+                        "medicos" -> TelaMedicos(
+                            aoVoltar = {
+                                telaAtual = "principal"
+                            }
+                        )
+
+                        "opme" -> TelaOpme(
+                            aoVoltar = {
+                                telaAtual = "principal"
+                            }
+                        )
                     }
                 }
             }
