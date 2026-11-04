@@ -15,15 +15,19 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 
 @Composable
 fun TelaLogin(
     aoVoltar: () -> Unit,
-    aoEntrar: () -> Unit
+    aoEntrar: (Boolean) -> Unit
 ) {
     var email by remember { mutableStateOf("") }
     var senha by remember { mutableStateOf("") }
     var mensagem by remember { mutableStateOf("") }
+    var carregando by remember { mutableStateOf(false) }
+
+    val escopo = rememberCoroutineScope()
 
     Column(
         modifier = Modifier
@@ -32,6 +36,7 @@ fun TelaLogin(
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+
         Spacer(modifier = Modifier.height(60.dp))
 
         Text(
@@ -62,7 +67,8 @@ fun TelaLogin(
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Email
             ),
-            singleLine = true
+            singleLine = true,
+            enabled = !carregando
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -76,7 +82,8 @@ fun TelaLogin(
             label = { Text("Senha") },
             modifier = Modifier.fillMaxWidth(),
             visualTransformation = PasswordVisualTransformation(),
-            singleLine = true
+            singleLine = true,
+            enabled = !carregando
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -108,8 +115,33 @@ fun TelaLogin(
                     }
 
                     else -> {
+                        carregando = true
                         mensagem = ""
-                        aoEntrar()
+
+                        escopo.launch {
+                            try {
+                                val ehAdministrador = autenticarUsuario(
+                                    email = email,
+                                    senha = senha
+                                )
+
+                                aoEntrar(ehAdministrador)
+
+                            } catch (e: Exception) {
+                                mensagem = when {
+                                    e.message?.contains(
+                                        "Invalid login credentials",
+                                        ignoreCase = true
+                                    ) == true ->
+                                        "E-mail ou senha incorretos."
+
+                                    else ->
+                                        "Não foi possível entrar. Verifique seus dados e tente novamente."
+                                }
+                            } finally {
+                                carregando = false
+                            }
+                        }
                     }
                 }
             },
@@ -117,16 +149,23 @@ fun TelaLogin(
                 .fillMaxWidth()
                 .height(55.dp),
             shape = RoundedCornerShape(30.dp),
+            enabled = !carregando,
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color(0xFF085DD3)
             )
         ) {
-            Text("Entrar", fontSize = 18.sp)
+            Text(
+                text = if (carregando) "Entrando..." else "Entrar",
+                fontSize = 18.sp
+            )
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        TextButton(onClick = aoVoltar) {
+        TextButton(
+            onClick = aoVoltar,
+            enabled = !carregando
+        ) {
             Text("Voltar")
         }
     }

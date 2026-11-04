@@ -15,7 +15,6 @@ import androidx.compose.ui.text.font.FontWeight
 
 private val AzulPrincipal = Color(0xFF085DD3)
 
-
 @Composable
 fun TelaPrincipal(
     aoSair: () -> Unit,
@@ -24,7 +23,9 @@ fun TelaPrincipal(
     aoAbrirProcedimentos: () -> Unit,
     aoAbrirOrcamentos: () -> Unit,
     aoAbrirMedicos: () -> Unit,
-    aoAbrirOpme: () -> Unit
+    aoAbrirOpme: () -> Unit,
+    aoAbrirCadastroValores: () -> Unit,
+    ehAdministrador: Boolean
 ) {
     Column(
         modifier = Modifier
@@ -53,9 +54,13 @@ fun TelaPrincipal(
         BotaoMenu("Pacientes", aoAbrirPacientes)
         BotaoMenu("Consultas", aoAbrirConsultas)
         BotaoMenu("Procedimentos", aoAbrirProcedimentos)
-        BotaoMenu("Orçamentos",  aoAbrirOrcamentos)
-        BotaoMenu( "Médicos", aoAbrirMedicos)
+        BotaoMenu("Orçamentos", aoAbrirOrcamentos)
+        BotaoMenu("Médicos", aoAbrirMedicos)
         BotaoMenu("OPME", aoAbrirOpme)
+
+        if (ehAdministrador) {
+            BotaoMenu("Cadastro de Valores", aoAbrirCadastroValores)
+        }
 
         Spacer(modifier = Modifier.weight(1f))
 
@@ -84,6 +89,9 @@ private fun BotaoMenu(
             containerColor = AzulPrincipal
         )
     ) {
-        Text(text = titulo, fontSize = 18.sp)
+        Text(
+            text = titulo,
+            fontSize = 18.sp
+        )
     }
 }

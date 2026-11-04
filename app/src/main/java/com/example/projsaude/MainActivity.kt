@@ -5,12 +5,15 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import com.example.projsaude.ui.theme.ProjSaudeTheme
+import androidx.compose.ui.unit.dp
+
 
 class MainActivity : ComponentActivity() {
 
@@ -18,11 +21,16 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+
         setContent {
             ProjSaudeTheme {
 
                 var telaAtual by remember {
                     mutableStateOf("inicio")
+                }
+
+                var ehAdministrador by remember {
+                    mutableStateOf(false)
                 }
 
                 Surface(
@@ -44,13 +52,15 @@ class MainActivity : ComponentActivity() {
                             aoVoltar = {
                                 telaAtual = "inicio"
                             },
-                            aoEntrar = {
+                            aoEntrar = { administrador ->
+                                ehAdministrador = administrador
                                 telaAtual = "principal"
                             }
                         )
 
                         "principal" -> TelaPrincipal(
                             aoSair = {
+                                ehAdministrador = false
                                 telaAtual = "inicio"
                             },
                             aoAbrirPacientes = {
@@ -70,8 +80,42 @@ class MainActivity : ComponentActivity() {
                             },
                             aoAbrirOpme = {
                                 telaAtual = "opme"
-                            }
+                            },
+                            aoAbrirCadastroValores = {
+                                if (ehAdministrador) {
+                                    telaAtual = "cadastroValores"
+                                }
+                            },
+                            ehAdministrador = ehAdministrador
                         )
+
+                        "cadastroValores" -> {
+                            if (ehAdministrador) {
+                                TelaCadastroValores(
+                                    aoVoltar = {
+                                        telaAtual = "principal"
+                                    }
+                                )
+                            } else {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(24.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Text("Acesso restrito ao administrador.")
+
+                                    Button(
+                                        onClick = {
+                                            telaAtual = "principal"
+                                        }
+                                    ) {
+                                        Text("Voltar")
+                                    }
+                                }
+                            }
+                        }
 
                         "cadastroPaciente" -> TelaCadastroPaciente(
                             aoVoltar = {
@@ -82,22 +126,21 @@ class MainActivity : ComponentActivity() {
                             }
                         )
 
-                        "acompanhamentoPaciente" -> {
-                            TelaCadastroPaciente(
-                                aoVoltar = {
-                                    telaAtual = "inicio"
-                                },
-                                aoEnviar = {
-                                    telaAtual = "inicio"
-                                }
-                            )
-                        }
-
-                        "acompanhemntoPaciente" -> TelaAcompanhamentoPaciente (
+                        "acompanhamentoPaciente" -> TelaCadastroPaciente(
                             aoVoltar = {
+                                telaAtual = "inicio"
+                            },
+                            aoEnviar = {
                                 telaAtual = "inicio"
                             }
                         )
+
+                        "acompanhemntoPaciente" ->
+                            TelaAcompanhamentoPaciente(
+                                aoVoltar = {
+                                    telaAtual = "inicio"
+                                }
+                            )
 
                         "consultas" -> TelaConsultas(
                             aoVoltar = {

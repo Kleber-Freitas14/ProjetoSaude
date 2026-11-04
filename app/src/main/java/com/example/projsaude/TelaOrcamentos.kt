@@ -9,20 +9,30 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 private data class Orcamento(
     val paciente: String,
     val medico: String,
     val procedimento: String,
-    val descricao: String,
     val dataPrevista: String,
+    val descricao: String,
     val hospedagem: String,
-    val necessitaUti: String,
-    val valor: String
+    val necessitaUti: String
 )
 
+private fun formatarData(millis: Long): String {
+    val formato = SimpleDateFormat("dd/MM/yyyy", Locale("pt", "BR"))
+    formato.timeZone = TimeZone.getTimeZone("UTC")
+    return formato.format(Date(millis))
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TelaOrcamentos(aoVoltar: () -> Unit) {
 
@@ -30,10 +40,10 @@ fun TelaOrcamentos(aoVoltar: () -> Unit) {
     var medico by remember { mutableStateOf("") }
     var procedimento by remember { mutableStateOf("") }
     var descricao by remember { mutableStateOf("") }
-    var dataPrevista by remember { mutableStateOf("") }
     var hospedagem by remember { mutableStateOf("Enfermaria") }
     var necessitaUti by remember { mutableStateOf("Não") }
-    var valor by remember { mutableStateOf("") }
+    var dataPrevistaMillis by remember { mutableStateOf<Long?>(null) }
+    var mostrarCalendario by remember { mutableStateOf(false) }
     var mensagem by remember { mutableStateOf("") }
 
     val orcamentos = remember {
@@ -42,6 +52,46 @@ fun TelaOrcamentos(aoVoltar: () -> Unit) {
 
     var orcamentoSelecionado by remember {
         mutableStateOf<Orcamento?>(null)
+    }
+
+    val estadoCalendario = rememberDatePickerState(
+        initialSelectedDateMillis = dataPrevistaMillis
+    )
+
+    if (mostrarCalendario) {
+        DatePickerDialog(
+            onDismissRequest = {
+                mostrarCalendario = false
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        dataPrevistaMillis =
+                            estadoCalendario.selectedDateMillis
+                        mostrarCalendario = false
+                    }
+                ) {
+                    Text("Confirmar")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        mostrarCalendario = false
+                    }
+                ) {
+                    Text("Cancelar")
+                }
+            }
+        ) {
+            DatePicker(
+                state = estadoCalendario,
+                title = {
+                    Text("Data prevista do procedimento")
+                },
+                showModeToggle = false
+            )
+        }
     }
 
     if (orcamentoSelecionado != null) {
@@ -76,8 +126,12 @@ fun TelaOrcamentos(aoVoltar: () -> Unit) {
             item {
                 OutlinedTextField(
                     value = paciente,
-                    onValueChange = { paciente = it },
-                    label = { Text("Nome do paciente *") },
+                    onValueChange = {
+                        paciente = it
+                    },
+                    label = {
+                        Text("Nome do paciente *")
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
@@ -86,8 +140,12 @@ fun TelaOrcamentos(aoVoltar: () -> Unit) {
             item {
                 OutlinedTextField(
                     value = medico,
-                    onValueChange = { medico = it },
-                    label = { Text("Médico solicitante *") },
+                    onValueChange = {
+                        medico = it
+                    },
+                    label = {
+                        Text("Médico solicitante *")
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
@@ -96,35 +154,54 @@ fun TelaOrcamentos(aoVoltar: () -> Unit) {
             item {
                 OutlinedTextField(
                     value = procedimento,
-                    onValueChange = { procedimento = it },
-                    label = { Text("Procedimento *") },
+                    onValueChange = {
+                        procedimento = it
+                    },
+                    label = {
+                        Text("Procedimento *")
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
+            }
+
+            item {
+                OutlinedTextField(
+                    value = dataPrevistaMillis?.let {
+                        formatarData(it)
+                    } ?: "",
+                    onValueChange = {},
+                    readOnly = true,
+                    label = {
+                        Text("Data prevista do procedimento *")
+                    },
+                    placeholder = {
+                        Text("Selecione a data")
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedButton(
+                    onClick = {
+                        mostrarCalendario = true
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Selecionar data")
+                }
             }
 
             item {
                 OutlinedTextField(
                     value = descricao,
-                    onValueChange = { descricao = it },
-                    label = { Text("Descrição") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-
-            item {
-                OutlinedTextField(
-                    value = dataPrevista,
-                    onValueChange = { dataPrevista = it },
-                    label = { Text("Data prevista do procedimento *") },
-                    placeholder = { Text("DD/MM/AAAA") },
+                    onValueChange = {
+                        descricao = it
+                    },
+                    label = {
+                        Text("Descrição / observações")
+                    },
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-
-                Text(
-                    text = "Data para planejamento da reserva do Centro Cirúrgico.",
-                    style = MaterialTheme.typography.bodySmall
+                    minLines = 2
                 )
             }
 
@@ -144,7 +221,9 @@ fun TelaOrcamentos(aoVoltar: () -> Unit) {
                     ) {
                         RadioButton(
                             selected = hospedagem == opcao,
-                            onClick = { hospedagem = opcao }
+                            onClick = {
+                                hospedagem = opcao
+                            }
                         )
                         Text(opcao)
                     }
@@ -162,7 +241,9 @@ fun TelaOrcamentos(aoVoltar: () -> Unit) {
                 ) {
                     RadioButton(
                         selected = necessitaUti == "Sim",
-                        onClick = { necessitaUti = "Sim" }
+                        onClick = {
+                            necessitaUti = "Sim"
+                        }
                     )
                     Text("Sim")
 
@@ -170,20 +251,12 @@ fun TelaOrcamentos(aoVoltar: () -> Unit) {
 
                     RadioButton(
                         selected = necessitaUti == "Não",
-                        onClick = { necessitaUti = "Não" }
+                        onClick = {
+                            necessitaUti = "Não"
+                        }
                     )
                     Text("Não")
                 }
-            }
-
-            item {
-                OutlinedTextField(
-                    value = valor,
-                    onValueChange = { valor = it },
-                    label = { Text("Valor total (R$) *") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
             }
 
             item {
@@ -193,19 +266,19 @@ fun TelaOrcamentos(aoVoltar: () -> Unit) {
                             paciente.isNotBlank() &&
                             medico.isNotBlank() &&
                             procedimento.isNotBlank() &&
-                            dataPrevista.isNotBlank() &&
-                            valor.isNotBlank()
+                            dataPrevistaMillis != null
                         ) {
                             orcamentos.add(
                                 Orcamento(
                                     paciente = paciente.trim(),
                                     medico = medico.trim(),
                                     procedimento = procedimento.trim(),
+                                    dataPrevista = formatarData(
+                                        dataPrevistaMillis!!
+                                    ),
                                     descricao = descricao.trim(),
-                                    dataPrevista = dataPrevista.trim(),
                                     hospedagem = hospedagem,
-                                    necessitaUti = necessitaUti,
-                                    valor = valor.trim()
+                                    necessitaUti = necessitaUti
                                 )
                             )
 
@@ -213,14 +286,13 @@ fun TelaOrcamentos(aoVoltar: () -> Unit) {
                             medico = ""
                             procedimento = ""
                             descricao = ""
-                            dataPrevista = ""
                             hospedagem = "Enfermaria"
                             necessitaUti = "Não"
-                            valor = ""
-
+                            dataPrevistaMillis = null
                             mensagem = "Orçamento cadastrado com sucesso!"
                         } else {
-                            mensagem = "Preencha todos os campos obrigatórios (*)."
+                            mensagem =
+                                "Preencha os campos obrigatórios (*)."
                         }
                     },
                     modifier = Modifier.fillMaxWidth()
@@ -233,10 +305,13 @@ fun TelaOrcamentos(aoVoltar: () -> Unit) {
                 if (mensagem.isNotEmpty()) {
                     Text(
                         text = mensagem,
-                        color = if (mensagem.startsWith("Orçamento"))
-                            androidx.compose.ui.graphics.Color(0xFF16803D)
-                        else
+                        color = if (
+                            mensagem.startsWith("Orçamento")
+                        ) {
+                            Color(0xFF16803D)
+                        } else {
                             MaterialTheme.colorScheme.error
+                        }
                     )
                 }
 
@@ -269,11 +344,10 @@ fun TelaOrcamentos(aoVoltar: () -> Unit) {
 
                         Text("Médico: ${orcamento.medico}")
                         Text("Procedimento: ${orcamento.procedimento}")
-                        Text("Descrição: ${orcamento.descricao}")
                         Text("Data prevista: ${orcamento.dataPrevista}")
+                        Text("Descrição: ${orcamento.descricao}")
                         Text("Hospedagem: ${orcamento.hospedagem}")
                         Text("Necessita de UTI: ${orcamento.necessitaUti}")
-                        Text("Valor total: R$ ${orcamento.valor}")
 
                         Text(
                             text = "Toque para abrir a composição do orçamento",

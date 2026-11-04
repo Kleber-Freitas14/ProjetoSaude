@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "129168204545",
+    "project_id": "projsaude",
+    "storage_bucket": "projsaude.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:129168204545:android:7eb9f78bbc17b703417100",
+        "android_client_info": {
+          "package_name": "com.example.projsaude"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAEdemevcY7c6rm30dO7U-n0E8IOcsAANs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
