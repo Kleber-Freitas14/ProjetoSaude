@@ -13,12 +13,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import com.example.projsaude.ui.theme.ProjSaudeTheme
 import androidx.compose.ui.unit.dp
+import com.google.firebase.auth.FirebaseAuth
 
 
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val firebaseAuth = FirebaseAuth.getInstance()
         enableEdgeToEdge()
 
 
