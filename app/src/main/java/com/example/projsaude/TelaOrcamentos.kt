@@ -15,10 +15,10 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.query.Columns
 import java.text.Normalizer
-import java.time.Instant
 import java.time.LocalDate
-import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
+import java.time.format.ResolverStyle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -123,6 +123,7 @@ private data class OrcamentoParaAbrir(
 )
 
 private val dataBrOrcamentoEquipe = DateTimeFormatter.ofPattern("dd/MM/uuuu")
+    .withResolverStyle(ResolverStyle.STRICT)
 
 private fun exibirDataOrcamentoEquipe(data: String): String =
     runCatching { LocalDate.parse(data).format(dataBrOrcamentoEquipe) }
@@ -139,6 +140,7 @@ fun TelaOrcamentos(aoVoltar: () -> Unit) {
             paciente = orcamento.paciente,
             procedimento = orcamento.procedimento,
             orcamentoId = orcamento.id,
+            aoMenuPrincipal = aoVoltar,
             aoVoltar = {
                 aberto = null
                 if (pagina == PaginaOrcamentos.NOVO) {
@@ -192,7 +194,6 @@ fun TelaOrcamentos(aoVoltar: () -> Unit) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FormularioNovoOrcamentoEquipe(
     aoVoltar: () -> Unit,
@@ -206,8 +207,7 @@ private fun FormularioNovoOrcamentoEquipe(
     var cirurgiao by remember { mutableStateOf<OpcaoOrcamentoEquipe?>(null) }
     var anestesista by remember { mutableStateOf<OpcaoOrcamentoEquipe?>(null) }
     var procedimento by remember { mutableStateOf<OpcaoOrcamentoEquipe?>(null) }
-    var data by remember { mutableStateOf<LocalDate?>(null) }
-    var mostrarCalendario by remember { mutableStateOf(false) }
+    var dataDigitada by remember { mutableStateOf("") }
     var descricao by remember { mutableStateOf("") }
     var hospedagem by remember { mutableStateOf("Enfermaria") }
     var necessitaUti by remember { mutableStateOf(false) }
@@ -229,33 +229,6 @@ private fun FormularioNovoOrcamentoEquipe(
             .sortedBy { it.nome.lowercase() }
             .take(8)
             .map { OpcaoOrcamentoEquipe(it.id, it.nome, it.rotulo()) }
-
-    if (mostrarCalendario) {
-        val calendario = rememberDatePickerState(
-            initialSelectedDateMillis = data
-                ?.atStartOfDay(ZoneOffset.UTC)?.toInstant()?.toEpochMilli()
-        )
-
-        DatePickerDialog(
-            onDismissRequest = { mostrarCalendario = false },
-            confirmButton = {
-                TextButton(
-                    enabled = calendario.selectedDateMillis != null,
-                    onClick = {
-                        data = calendario.selectedDateMillis?.let {
-                            Instant.ofEpochMilli(it).atOffset(ZoneOffset.UTC).toLocalDate()
-                        }
-                        mostrarCalendario = false
-                    }
-                ) { Text("Confirmar") }
-            },
-            dismissButton = {
-                TextButton(onClick = { mostrarCalendario = false }) { Text("Cancelar") }
-            }
-        ) {
-            DatePicker(state = calendario, showModeToggle = false)
-        }
-    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().safeDrawingPadding().imePadding(),
@@ -327,13 +300,23 @@ private fun FormularioNovoOrcamentoEquipe(
         }
 
         item {
-            OutlinedButton(
-                onClick = { mostrarCalendario = true },
+            OutlinedTextField(
+                value = dataDigitada,
+                onValueChange = { texto ->
+                    val digitos = texto.filter { it in '0'..'9' }.take(8)
+                    dataDigitada = listOf(
+                        digitos.take(2),
+                        digitos.drop(2).take(2),
+                        digitos.drop(4)
+                    ).filter { it.isNotEmpty() }.joinToString("/")
+                },
+                label = { Text("Data prevista") },
+                placeholder = { Text("DD/MM/AAAA") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
                 enabled = !salvando,
                 modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(data?.format(dataBrOrcamentoEquipe) ?: "Selecionar data prevista")
-            }
+            )
 
             OutlinedTextField(
                 value = descricao,
@@ -380,15 +363,22 @@ private fun FormularioNovoOrcamentoEquipe(
                     val cirurgiaoId = cirurgiao?.id
                     val anestesistaId = anestesista?.id
                     val cirurgia = procedimento
-                    val dataPrevista = data
                     val usuarioId = cliente.auth.currentUserOrNull()?.id
 
                     if (pessoa == null || cirurgiaoId == null || anestesistaId == null ||
-                        cirurgia == null || dataPrevista == null
+                        cirurgia == null
                     ) {
-                        mensagem = "Selecione o paciente, os médicos, o procedimento e a data."
+                        mensagem = "Selecione o paciente, os médicos e o procedimento."
                         return@Button
                     }
+
+                    val dataPrevista = try {
+                        LocalDate.parse(dataDigitada, dataBrOrcamentoEquipe)
+                    } catch (_: DateTimeParseException) {
+                        mensagem = "Digite uma data prevista válida no formato DD/MM/AAAA."
+                        return@Button
+                    }
+
                     if (usuarioId == null) {
                         mensagem = "Entre novamente para cadastrar o orçamento."
                         return@Button
@@ -648,9 +638,9 @@ private fun ListaOrcamentosEquipe(
 
                     TextButton(
                         onClick = {
-                            aoAbrir(OrcamentoParaAbrir(
-                                registro.id, nomePaciente, nomeProcedimento
-                            ))
+                            aoAbrir(
+                                OrcamentoParaAbrir(registro.id, nomePaciente, nomeProcedimento)
+                            )
                         }
                     ) {
                         Text(

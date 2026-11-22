@@ -1,5 +1,6 @@
 package com.example.projsaude
 
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -15,6 +16,8 @@ import io.github.jan.supabase.postgrest.query.Columns
 import java.math.BigDecimal
 import java.text.NumberFormat
 import java.time.LocalDate
+import java.time.OffsetDateTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
@@ -74,12 +77,46 @@ private data class ComposicaoDoPaciente(
     }
 }
 
-private val formatoDataOrcamentoPaciente = DateTimeFormatter.ofPattern("dd/MM/uuuu")
+private val formatoDataOrcamentoPaciente =
+    DateTimeFormatter.ofPattern("dd/MM/uuuu")
+
+private val formatoComposicaoPaciente =
+    DateTimeFormatter.ofPattern("dd/MM/uuuu 'às' HH:mm")
 
 private fun dataOrcamentoPaciente(valor: String): String =
     runCatching {
         LocalDate.parse(valor).format(formatoDataOrcamentoPaciente)
     }.getOrDefault(valor)
+
+private fun dataComposicaoPaciente(valor: String): String =
+    runCatching {
+        OffsetDateTime.parse(valor)
+            .atZoneSameInstant(ZoneId.systemDefault())
+            .format(formatoComposicaoPaciente)
+    }.getOrDefault(valor)
+
+private fun erroDeAceite(erro: Exception): String {
+    val detalhe = erro.message.orEmpty()
+    val codigo = Regex("\\b(?:PGRST[0-9]{3}|42501|P0001)\\b").find(detalhe)?.value
+    val referencia = codigo ?: erro.javaClass.simpleName
+    Log.w("AceiteOrcamento", "Falha na chamada de aceite: $referencia")
+
+    return when {
+        "Entre com uma conta de paciente." in detalhe ->
+            "Entre novamente com sua conta de paciente para confirmar o aceite."
+
+        "O orçamento não está disponível para aceite." in detalhe ->
+            "O orçamento não está disponível para aceite."
+
+        codigo == "PGRST202" ->
+            "O Supabase não encontrou a função de aceite (PGRST202)."
+
+        codigo == "42501" ->
+            "O Supabase recusou o aceite para esta conta (42501)."
+
+        else -> "O envio do aceite falhou ($referencia)."
+    }
+}
 
 @Composable
 fun TelaOrcamentosPaciente(aoVoltar: () -> Unit) {
@@ -97,6 +134,8 @@ fun TelaOrcamentosPaciente(aoVoltar: () -> Unit) {
     var confirmando by remember { mutableStateOf(false) }
     var aceitando by remember { mutableStateOf(false) }
     var mensagem by remember { mutableStateOf("") }
+    var aceitePendenteId by remember { mutableStateOf<String?>(null) }
+    var erroEnvio by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(recarga) {
         carregando = true
@@ -141,8 +180,24 @@ fun TelaOrcamentosPaciente(aoVoltar: () -> Unit) {
                 .filter { it.salvo_em != null }
                 .sortedByDescending { it.salvo_em }
 
+            aceitePendenteId?.let { id ->
+                val status = composicoes
+                    .firstOrNull { it.orcamento.id == id }
+                    ?.orcamento?.status
+
+                mensagem = when {
+                    status == "Aceito" -> "Orçamento aceito com sucesso."
+                    erroEnvio != null -> erroEnvio.orEmpty()
+                    status != null -> "Aceite ainda não confirmado. Status no Supabase: $status."
+                    else -> "O orçamento não apareceu na consulta após o envio."
+                }
+                aceitePendenteId = null
+                erroEnvio = null
+            }
+
             if (composicoes.none { it.orcamento.id == abertoId }) {
                 abertoId = null
+                confirmando = false
             }
         } catch (e: CancellationException) {
             throw e
@@ -154,11 +209,14 @@ fun TelaOrcamentosPaciente(aoVoltar: () -> Unit) {
     }
 
     val aberto = composicoes.firstOrNull { it.orcamento.id == abertoId }
+    val totalAberto = remember(aberto) { aberto?.total() }
 
     fun voltar() {
-        if (aceitando) return
+        if (aceitando || (carregando && aceitePendenteId != null)) return
 
-        if (abertoId != null) {
+        if (confirmando) {
+            confirmando = false
+        } else if (abertoId != null) {
             abertoId = null
             mensagem = ""
         } else {
@@ -166,57 +224,41 @@ fun TelaOrcamentosPaciente(aoVoltar: () -> Unit) {
         }
     }
 
-    BackHandler { voltar() }
+    fun enviarAceite(id: String) {
+        if (aceitando || carregando) return
 
-    if (confirmando && aberto != null) {
-        AlertDialog(
-            onDismissRequest = { confirmando = false },
-            title = { Text("Aceitar orçamento?") },
-            text = {
-                Text(
-                    "Ao confirmar, seu aceite será registrado. " +
-                            "O orçamento ficará disponível para consulta."
+        confirmando = false
+        aceitando = true
+        mensagem = "Registrando aceite…"
+        erroEnvio = null
+        aceitePendenteId = id
+
+        escopo.launch {
+            try {
+                cliente.postgrest.rpc(
+                    "aceitar_orcamento",
+                    buildJsonObject { put("p_orcamento_id", id) }
                 )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val id = aberto.orcamento.id
-                        confirmando = false
-                        aceitando = true
-                        mensagem = ""
-
-                        escopo.launch {
-                            try {
-                                cliente.postgrest.rpc(
-                                    "aceitar_orcamento",
-                                    buildJsonObject { put("p_orcamento_id", id) }
-                                )
-
-                                mensagem = "Orçamento aceito com sucesso."
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (_: Exception) {
-                                mensagem = "Não foi possível confirmar o aceite. Confira o status atualizado."
-                            } finally {
-                                carregando = true
-                                aceitando = false
-                                recarga++
-                            }
-                        }
-                    }
-                ) { Text("Confirmar aceite") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmando = false }) {
-                    Text("Cancelar")
-                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                erroEnvio = erroDeAceite(e)
+            } finally {
+                mensagem = erroEnvio ?: "Conferindo o status no Supabase…"
+                carregando = true
+                aceitando = false
+                recarga++
             }
-        )
+        }
     }
 
+    BackHandler { voltar() }
+
     Column(
-        modifier = Modifier.fillMaxSize().safeDrawingPadding().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .safeDrawingPadding()
+            .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
@@ -224,7 +266,9 @@ fun TelaOrcamentosPaciente(aoVoltar: () -> Unit) {
             style = MaterialTheme.typography.headlineMedium
         )
 
-        if (mensagem.isNotBlank()) Text(mensagem)
+        if (mensagem.isNotBlank()) {
+            Text(mensagem)
+        }
 
         LazyColumn(
             modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -242,7 +286,9 @@ fun TelaOrcamentosPaciente(aoVoltar: () -> Unit) {
                     item {
                         Text(aberto.orcamento.procedimento?.nome ?: "Orçamento")
                         Text("Status: ${aberto.orcamento.status ?: "Não informado"}")
-
+                        aberto.salvo_em?.let {
+                            Text("Composição de ${dataComposicaoPaciente(it)}")
+                        }
                         aberto.orcamento.data_prevista?.let {
                             Text("Data prevista: ${dataOrcamentoPaciente(it)}")
                         }
@@ -276,22 +322,16 @@ fun TelaOrcamentosPaciente(aoVoltar: () -> Unit) {
                     }
 
                     item {
-                        val total = aberto.total()
                         Text(
-                            total?.let { "Total: ${moeda.format(it)}" } ?: "Total indisponível",
+                            totalAberto?.let { "Total: ${moeda.format(it)}" }
+                                ?: "Total indisponível",
                             style = MaterialTheme.typography.titleLarge
                         )
 
                         when (aberto.orcamento.status) {
-                            "Pendente" -> Button(
-                                onClick = { confirmando = true },
-                                enabled = !aceitando && total != null,
-                                modifier = Modifier.fillMaxWidth()
-                            ) { Text(if (aceitando) "Registrando aceite…" else "Aceitar orçamento") }
-
                             "Aceito" -> Text("Aceite registrado.")
-
                             "Em espera" -> Text("O orçamento está em espera.")
+                            else -> Unit
                         }
                     }
                 }
@@ -308,7 +348,12 @@ fun TelaOrcamentosPaciente(aoVoltar: () -> Unit) {
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text("Status: ${composicao.orcamento.status ?: "Não informado"}")
-                            composicao.total()?.let { Text("Total: ${moeda.format(it)}") }
+                            composicao.salvo_em?.let {
+                                Text("Composição de ${dataComposicaoPaciente(it)}")
+                            }
+                            composicao.total()?.let {
+                                Text("Total: ${moeda.format(it)}")
+                            }
 
                             TextButton(
                                 onClick = {
@@ -322,16 +367,56 @@ fun TelaOrcamentosPaciente(aoVoltar: () -> Unit) {
             }
         }
 
+        if (!carregando && erroAoCarregar == null &&
+            aberto != null && aberto.orcamento.status == "Pendente"
+        ) {
+            if (confirmando && totalAberto != null) {
+                Text("Confirme o aceite do orçamento de ${moeda.format(totalAberto)}.")
+
+                Button(
+                    onClick = { enviarAceite(aberto.orcamento.id) },
+                    enabled = !aceitando,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Confirmar aceite agora")
+                }
+
+                TextButton(onClick = { confirmando = false }) {
+                    Text("Cancelar")
+                }
+            } else {
+                Button(
+                    onClick = {
+                        if (totalAberto == null) {
+                            mensagem = "O total do orçamento está indisponível para sua conta."
+                        } else {
+                            mensagem = ""
+                            confirmando = true
+                        }
+                    },
+                    enabled = !aceitando,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (aceitando) "Registrando aceite…" else "Revisar e aceitar orçamento")
+                }
+            }
+        }
+
         if (!carregando && erroAoCarregar == null) {
-            TextButton(onClick = { recarga++ }, enabled = !aceitando) {
+            TextButton(
+                onClick = { recarga++ },
+                enabled = !aceitando && !confirmando
+            ) {
                 Text("Atualizar")
             }
         }
 
         OutlinedButton(
             onClick = ::voltar,
-            enabled = !aceitando,
+            enabled = !aceitando && (!carregando || aceitePendenteId == null),
             modifier = Modifier.fillMaxWidth()
-        ) { Text("Voltar") }
+        ) {
+            Text("Voltar")
+        }
     }
 }

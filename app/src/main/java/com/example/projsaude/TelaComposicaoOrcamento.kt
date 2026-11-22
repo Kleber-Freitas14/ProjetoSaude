@@ -9,8 +9,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
@@ -39,7 +41,8 @@ private data class PrecoComposicao(
 private data class OrcamentoComposicao(
     val status: String? = null,
     val hospedagem: String? = null,
-    val aceito_em: String? = null
+    val aceito_em: String? = null,
+    val necessita_uti: Boolean? = null
 )
 
 @Serializable
@@ -127,17 +130,22 @@ fun TelaComposicaoOrcamento(
     paciente: String,
     procedimento: String,
     aoVoltar: () -> Unit,
+    aoMenuPrincipal: () -> Unit,
     orcamentoId: String
 ) {
     val cliente = SupabaseConfig.client
     val escopo = rememberCoroutineScope()
+    val contexto = LocalContext.current
+    val rascunhos = remember(contexto.applicationContext) {
+        RascunhosOrcamentoDatabase.obter(contexto).rascunhos()
+    }
     val moeda = remember {
         NumberFormat.getCurrencyInstance(Locale.forLanguageTag("pt-BR"))
     }
 
     var etapa by rememberSaveable(orcamentoId) { mutableIntStateOf(1) }
     var porte by rememberSaveable(orcamentoId) { mutableStateOf<String?>(null) }
-    var menuPorte by remember { mutableStateOf(false) }
+    var mostrarPortes by rememberSaveable(orcamentoId) { mutableStateOf(false) }
     var acomodacao by rememberSaveable(orcamentoId) { mutableStateOf<String?>(null) }
     var entradaUti by rememberSaveable(orcamentoId) { mutableStateOf("") }
     var saidaUti by rememberSaveable(orcamentoId) { mutableStateOf("") }
@@ -158,6 +166,42 @@ fun TelaComposicaoOrcamento(
     var mensagem by remember { mutableStateOf("") }
     var recarga by remember { mutableIntStateOf(0) }
     var confirmarExclusao by remember { mutableStateOf(false) }
+    var rascunhoConsultado by rememberSaveable(orcamentoId) { mutableStateOf(false) }
+    var conferindoEnvio by rememberSaveable(orcamentoId) { mutableStateOf(false) }
+    val necessitaUti = orcamento?.necessita_uti == true
+
+    fun usuarioAtual(): String = checkNotNull(cliente.auth.currentUserOrNull()?.id)
+
+    fun montarRascunho(usuarioId: String) = RascunhoComposicao(
+        usuarioId = usuarioId,
+        orcamentoId = orcamentoId,
+        etapa = etapa,
+        porte = porte,
+        acomodacao = acomodacao ?: "Nenhum",
+        entradaUti = if (necessitaUti) entradaUti else "",
+        saidaUti = if (necessitaUti) saidaUti else "",
+        entradaAcomodacao = entradaAcomodacao,
+        saidaAcomodacao = saidaAcomodacao,
+        extras = extras,
+        hemoterapia = hemoterapia,
+        fisioterapia = fisioterapia
+    )
+
+    fun guardarRascunho() {
+        processando = true
+        escopo.launch {
+            try {
+                rascunhos.salvar(montarRascunho(usuarioAtual()))
+                mensagem = "Rascunho salvo neste aparelho."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                mensagem = "Não foi possível guardar o rascunho neste aparelho."
+            } finally {
+                processando = false
+            }
+        }
+    }
 
     LaunchedEffect(orcamentoId, recarga) {
         carregando = true
@@ -165,7 +209,7 @@ fun TelaComposicaoOrcamento(
 
         try {
             val registro = cliente.from("orcamentos")
-                .select(Columns.raw("status,hospedagem,aceito_em")) {
+                .select(Columns.raw("status,hospedagem,aceito_em,necessita_uti")) {
                     filter { eq("id", orcamentoId) }
                 }.decodeSingle<OrcamentoComposicao>()
 
@@ -178,7 +222,9 @@ fun TelaComposicaoOrcamento(
                     )
                 ) {
                     filter { eq("orcamento_id", orcamentoId) }
-                }.decodeList<ComposicaoSalva>().singleOrNull()
+                }.decodeList<ComposicaoSalva>().let { resultados ->
+                    if (resultados.isEmpty()) null else resultados.single()
+                }
 
             if (composicao == null && registro.status in listOf("Pendente", "Em espera")) {
                 precos = cliente.from("valores_hospitalares")
@@ -194,6 +240,51 @@ fun TelaComposicaoOrcamento(
             orcamento = registro
             salvo = composicao
             if (acomodacao == null) acomodacao = registro.hospedagem ?: "Nenhum"
+
+            val conferiuEnvio = conferindoEnvio
+            if (conferiuEnvio) {
+                mensagem = if (composicao != null) {
+                    "Orçamento salvo no Supabase."
+                } else {
+                    "Composição ainda não confirmada no Supabase. O rascunho está salvo neste aparelho."
+                }
+                conferindoEnvio = false
+            }
+
+            try {
+                if (composicao != null) {
+                    rascunhos.remover(usuarioAtual(), orcamentoId)
+                } else if (!rascunhoConsultado) {
+                    val rascunho = rascunhos.buscar(usuarioAtual(), orcamentoId)
+                    if (rascunho != null) {
+                        etapa = rascunho.etapa.coerceIn(1, 4)
+                        porte = rascunho.porte
+                        acomodacao = rascunho.acomodacao
+
+                        if (registro.necessita_uti == true) {
+                            entradaUti = rascunho.entradaUti
+                            saidaUti = rascunho.saidaUti
+                        }
+
+                        entradaAcomodacao = rascunho.entradaAcomodacao
+                        saidaAcomodacao = rascunho.saidaAcomodacao
+                        extras = rascunho.extras
+                        hemoterapia = rascunho.hemoterapia
+                        fisioterapia = rascunho.fisioterapia
+
+                        if (!conferiuEnvio) mensagem = "Rascunho recuperado deste aparelho."
+                    }
+                    rascunhoConsultado = true
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                mensagem = if (composicao != null) {
+                    "Orçamento salvo no Supabase. Não foi possível limpar o rascunho local."
+                } else {
+                    "Não foi possível carregar o rascunho neste aparelho."
+                }
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -241,6 +332,7 @@ fun TelaComposicaoOrcamento(
             }
         }
     }
+
     BackHandler { voltar() }
 
     if (confirmarExclusao) {
@@ -266,12 +358,21 @@ fun TelaComposicaoOrcamento(
 
     val tipoAcomodacao = acomodacao ?: "Nenhum"
     val codigoAcomodacao = acomodacoesParaSalvar[tipoAcomodacao]
-    val periodoUti = lerPeriodoComposicao("UTI", entradaUti, saidaUti)
-    val periodoAcomodacao = if (codigoAcomodacao == null) null else {
+    val periodoUti = if (necessitaUti) {
+        lerPeriodoComposicao("UTI", entradaUti, saidaUti)
+    } else {
+        null
+    }
+
+    val periodoAcomodacao = if (codigoAcomodacao == null) {
+        null
+    } else {
         lerPeriodoComposicao(tipoAcomodacao, entradaAcomodacao, saidaAcomodacao)
     }
 
-    val erroUti = (entradaUti.isNotBlank() || saidaUti.isNotBlank()) && periodoUti == null
+    val erroUti = necessitaUti &&
+            (entradaUti.isNotBlank() || saidaUti.isNotBlank()) &&
+            periodoUti == null
     val erroAcomodacao = codigoAcomodacao != null && periodoAcomodacao == null
 
     fun linha(codigo: String, nome: String, quantidade: Long) =
@@ -338,13 +439,21 @@ fun TelaComposicaoOrcamento(
         mensagem = ""
         escopo.launch {
             try {
-                cliente.postgrest.rpc("salvar_composicao_orcamento", parametros)
-                mensagem = "Orçamento salvo."
+                rascunhos.salvar(montarRascunho(usuarioAtual()))
+                conferindoEnvio = true
+                try {
+                    cliente.postgrest.rpc("salvar_composicao_orcamento", parametros)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    mensagem = "Envio a confirmar. O rascunho foi mantido neste aparelho."
+                }
+                carregando = true
                 recarga++
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                mensagem = "A gravação não foi confirmada. Use Atualizar para conferir antes de tentar de novo."
+                mensagem = "Não foi possível guardar o rascunho para enviar o orçamento."
             } finally {
                 processando = false
             }
@@ -380,6 +489,7 @@ fun TelaComposicaoOrcamento(
 
                 composicaoSalva != null -> {
                     Text("Composição salva", style = MaterialTheme.typography.titleLarge)
+
                     composicaoSalva.periodos_internacao.forEach { periodo ->
                         Text(
                             "${periodo.tipo_acomodacao}: " +
@@ -404,7 +514,10 @@ fun TelaComposicaoOrcamento(
                     val totalSalvo = composicaoSalva.itens_composicao.fold(BigDecimal.ZERO) { total, item ->
                         total.add(item.valor_total.content.toBigDecimal())
                     }
-                    Text("Total salvo: ${moeda.format(totalSalvo)}", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "Total salvo: ${moeda.format(totalSalvo)}",
+                        style = MaterialTheme.typography.titleLarge
+                    )
 
                     if (status == "Aceito") {
                         Text("Orçamento aceito pelo paciente. A composição está bloqueada.")
@@ -413,36 +526,65 @@ fun TelaComposicaoOrcamento(
 
                 !podeMontar -> Text("Este orçamento não tem composição salva disponível.")
 
+                processando -> CircularProgressIndicator()
+
                 else -> {
                     Text("Etapa $etapa de 4")
                     when (etapa) {
                         1 -> {
                             Text("Taxas e porte cirúrgico")
-                            Box {
-                                OutlinedButton(onClick = { menuPorte = true }) {
-                                    Text(portesParaSalvar[porte] ?: "Selecionar porte cirúrgico")
+
+                            OutlinedButton(
+                                onClick = { mostrarPortes = !mostrarPortes },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    if (mostrarPortes) "Fechar opções de porte"
+                                    else portesParaSalvar[porte] ?: "Selecionar porte cirúrgico"
+                                )
+                            }
+
+                            if (mostrarPortes) {
+                                TextButton(
+                                    onClick = {
+                                        porte = null
+                                        mostrarPortes = false
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Sem porte cirúrgico")
                                 }
-                                DropdownMenu(menuPorte, { menuPorte = false }) {
-                                    DropdownMenuItem(
-                                        text = { Text("Sem porte cirúrgico") },
-                                        onClick = { porte = null; menuPorte = false }
-                                    )
-                                    portesParaSalvar.forEach { (codigo, nome) ->
-                                        DropdownMenuItem(
-                                            text = { Text(nome) },
-                                            onClick = { porte = codigo; menuPorte = false }
-                                        )
+
+                                portesParaSalvar.forEach { (codigo, nome) ->
+                                    TextButton(
+                                        onClick = {
+                                            porte = codigo
+                                            mostrarPortes = false
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(nome)
                                     }
                                 }
                             }
+
                             taxas.forEach { LinhaOrcamentoComposicao(it, moeda) }
                         }
 
                         2 -> {
                             Text("Internação e acomodação")
-                            CampoOrcamentoComposicao("Entrada na UTI", entradaUti) { entradaUti = it }
-                            CampoOrcamentoComposicao("Saída da UTI", saidaUti) { saidaUti = it }
-                            if (erroUti) Text("Confira as datas da UTI no formato DD/MM/AAAA.")
+
+                            if (necessitaUti) {
+                                CampoOrcamentoComposicao("Entrada na UTI", entradaUti) {
+                                    entradaUti = it
+                                }
+                                CampoOrcamentoComposicao("Saída da UTI", saidaUti) {
+                                    saidaUti = it
+                                }
+                                if (erroUti) {
+                                    Text("Confira as datas da UTI no formato DD/MM/AAAA.")
+                                }
+                            }
 
                             (listOf("Nenhum") + acomodacoesParaSalvar.keys).forEach { opcao ->
                                 Row {
@@ -453,6 +595,7 @@ fun TelaComposicaoOrcamento(
                                     Text(opcao, modifier = Modifier.padding(top = 12.dp))
                                 }
                             }
+
                             if (codigoAcomodacao != null) {
                                 CampoOrcamentoComposicao("Entrada na acomodação", entradaAcomodacao) {
                                     entradaAcomodacao = it
@@ -464,14 +607,21 @@ fun TelaComposicaoOrcamento(
                                     Text("Preencha as duas datas válidas ou selecione Nenhum.")
                                 }
                             }
+
                             internacao.forEach { LinhaOrcamentoComposicao(it, moeda) }
                         }
 
                         3 -> {
                             Text("Procedimentos e serviços")
-                            CampoOrcamentoComposicao("Procedimentos extras", extras, true) { extras = it }
-                            CampoOrcamentoComposicao("Hemoterapia", hemoterapia, true) { hemoterapia = it }
-                            CampoOrcamentoComposicao("Fisioterapia", fisioterapia, true) { fisioterapia = it }
+                            CampoOrcamentoComposicao("Procedimentos extras", extras, true) {
+                                extras = it
+                            }
+                            CampoOrcamentoComposicao("Hemoterapia", hemoterapia, true) {
+                                hemoterapia = it
+                            }
+                            CampoOrcamentoComposicao("Fisioterapia", fisioterapia, true) {
+                                fisioterapia = it
+                            }
                             servicos.forEach { LinhaOrcamentoComposicao(it, moeda) }
                         }
 
@@ -480,6 +630,7 @@ fun TelaComposicaoOrcamento(
                             linhas.forEach { LinhaOrcamentoComposicao(it, moeda) }
                             val titulo = if (semPreco.isEmpty()) "Total previsto" else "Total parcial"
                             Text("$titulo: ${moeda.format(totalPrevisto)}")
+
                             if (semPreco.isNotEmpty()) {
                                 Text("Cadastre os preços faltantes antes de salvar.")
                             }
@@ -511,6 +662,12 @@ fun TelaComposicaoOrcamento(
         }
 
         if (!carregando && !erroCarga && composicaoSalva == null && podeMontar) {
+            OutlinedButton(
+                onClick = ::guardarRascunho,
+                enabled = !processando,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Salvar rascunho neste aparelho") }
+
             if (etapa < 4) {
                 Button(
                     onClick = { etapa++ },
@@ -523,6 +680,16 @@ fun TelaComposicaoOrcamento(
                     enabled = !processando && semPreco.isEmpty() && !erroUti && !erroAcomodacao,
                     modifier = Modifier.fillMaxWidth()
                 ) { Text(if (processando) "Salvando…" else "Salvar orçamento") }
+            }
+        }
+
+        if (!carregando && !erroCarga && composicaoSalva != null) {
+            Button(
+                onClick = aoMenuPrincipal,
+                enabled = !processando,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Voltar ao menu principal")
             }
         }
 

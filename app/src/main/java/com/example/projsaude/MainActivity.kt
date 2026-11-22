@@ -26,9 +26,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import com.example.projsaude.ui.theme.ProjSaudeTheme
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
@@ -55,130 +59,150 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             ProjSaudeTheme {
-                var telaAtual by remember { mutableStateOf("inicio") }
-                var ehAdministrador by remember { mutableStateOf(false) }
-
-                val telaAnterior = when (telaAtual) {
-                    "acessoPaciente" -> "inicio"
-                    "loginPaciente", "cadastroPaciente", "menuPaciente" -> "acessoPaciente"
-                    "historicoPaciente" -> "menuPaciente"
-                    else -> null
-                }
-
-                if (telaAnterior != null) {
-                    BackHandler { telaAtual = telaAnterior }
-                }
+                val navegacao = rememberNavController()
+                var ehAdministrador by rememberSaveable { mutableStateOf(false) }
+                val voltar: () -> Unit = { navegacao.popBackStack() }
 
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    when (telaAtual) {
-                        "inicio" -> TelaInicial(
-                            aoAcessarColaborador = { telaAtual = "login" },
-                            aoAcessarPaciente = { telaAtual = "acessoPaciente" }
-                        )
+                    NavHost(navController = navegacao, startDestination = "inicio") {
+                        composable("inicio") {
+                            TelaInicial(
+                                aoAcessarColaborador = { navegacao.navigate("login") },
+                                aoAcessarPaciente = { navegacao.navigate("acessoPaciente") }
+                            )
+                        }
 
-                        "acessoPaciente" -> TelaAcessoPaciente(
-                            aoEntrar = { telaAtual = "loginPaciente" },
-                            aoCadastrar = { telaAtual = "cadastroPaciente" },
-                            aoVoltar = { telaAtual = "inicio" }
-                        )
+                        composable("acessoPaciente") {
+                            TelaAcessoPaciente(
+                                aoEntrar = { navegacao.navigate("loginPaciente") },
+                                aoCadastrar = { navegacao.navigate("cadastroPaciente") },
+                                aoVoltar = voltar
+                            )
+                        }
 
-                        "loginPaciente" -> TelaLogin(
-                            titulo = "Login do paciente",
-                            aoVoltar = { telaAtual = "acessoPaciente" },
-                            autenticar = { email, senha ->
-                                autenticarUsuario(email, senha, acessoPaciente = true)
-                            },
-                            aoEntrar = { telaAtual = "menuPaciente" }
-                        )
+                        composable("loginPaciente") {
+                            TelaLogin(
+                                titulo = "Login do paciente",
+                                aoVoltar = voltar,
+                                autenticar = { email, senha ->
+                                    autenticarUsuario(email, senha, acessoPaciente = true)
+                                },
+                                aoEntrar = {
+                                    navegacao.navigate("menuPaciente") {
+                                        popUpTo("acessoPaciente")
+                                    }
+                                }
+                            )
+                        }
 
-                        "cadastroPaciente" -> TelaCadastroPaciente(
-                            aoVoltar = { telaAtual = "acessoPaciente" },
-                            aoEnviar = { telaAtual = "loginPaciente" }
-                        )
+                        composable("cadastroPaciente") {
+                            TelaCadastroPaciente(
+                                aoVoltar = voltar,
+                                aoEnviar = {
+                                    navegacao.navigate("loginPaciente") {
+                                        popUpTo("acessoPaciente")
+                                    }
+                                }
+                            )
+                        }
 
-                        "menuPaciente" -> PaginaPaciente("Área do paciente") {
-                            Button(
-                                onClick = { telaAtual = "novoPedido" },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("Novo pedido")
-                            }
+                        composable("menuPaciente") {
+                            PaginaPaciente("Área do paciente") {
+                                Button(
+                                    onClick = { navegacao.navigate("novoPedido") },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Novo pedido")
+                                }
 
-                            OutlinedButton(
-                                onClick = { telaAtual = "historicoPaciente" },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("Acompanhar pedidos")
-                            }
+                                OutlinedButton(
+                                    onClick = { navegacao.navigate("historicoPaciente") },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Acompanhar pedidos")
+                                }
 
-                            OutlinedButton(
-                                onClick = { telaAtual = "orcamentosPaciente" },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("Meus orçamentos")
-                            }
+                                OutlinedButton(
+                                    onClick = { navegacao.navigate("orcamentosPaciente") },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Meus orçamentos")
+                                }
 
-                            TextButton(onClick = { telaAtual = "acessoPaciente" }) {
-                                Text("Voltar")
+                                TextButton(onClick = voltar) {
+                                    Text("Voltar")
+                                }
                             }
                         }
 
-                        "orcamentosPaciente" -> TelaOrcamentosPaciente(
-                            aoVoltar = { telaAtual = "menuPaciente" }
-                        )
+                        composable("orcamentosPaciente") {
+                            TelaOrcamentosPaciente(aoVoltar = voltar)
+                        }
 
-                        "novoPedido" -> TelaNovoPedido(
-                            aoVoltar = { telaAtual = "menuPaciente" },
-                            aoEnviar = { telaAtual = "historicoPaciente" }
-                        )
+                        composable("novoPedido") {
+                            TelaNovoPedido(
+                                aoVoltar = voltar,
+                                aoEnviar = {
+                                    navegacao.navigate("historicoPaciente") {
+                                        popUpTo("menuPaciente")
+                                    }
+                                }
+                            )
+                        }
 
-                        "historicoPaciente" -> TelaHistoricoPedidos(
-                            aoVoltar = { telaAtual = "menuPaciente" }
-                        )
+                        composable("historicoPaciente") {
+                            TelaHistoricoPedidos(aoVoltar = voltar)
+                        }
 
-                        "login" -> TelaLogin(
-                            aoVoltar = { telaAtual = "inicio" },
-                            aoEntrar = { administrador ->
-                                ehAdministrador = administrador
-                                telaAtual = "principal"
-                            }
-                        )
+                        composable("login") {
+                            TelaLogin(
+                                aoVoltar = voltar,
+                                aoEntrar = { administrador ->
+                                    ehAdministrador = administrador
+                                    navegacao.navigate("principal") {
+                                        popUpTo("inicio")
+                                    }
+                                }
+                            )
+                        }
 
-                        "principal" -> TelaPrincipal(
-                            aoSair = {
-                                ehAdministrador = false
-                                telaAtual = "inicio"
-                            },
-                            aoAbrirPacientes = { telaAtual = "pacientes" },
-                            aoAbrirConsultas = { telaAtual = "consultas" },
-                            aoAbrirProcedimentos = { telaAtual = "procedimentos" },
-                            aoAbrirOrcamentos = { telaAtual = "orcamentos" },
-                            aoAbrirMedicos = { telaAtual = "medicos" },
-                            aoAbrirOpme = { telaAtual = "opme" },
-                            aoAbrirCadastroValores = {
-                                if (ehAdministrador) telaAtual = "cadastroValores"
-                            },
-                            ehAdministrador = ehAdministrador
-                        )
+                        composable("principal") {
+                            TelaPrincipal(
+                                aoSair = {
+                                    ehAdministrador = false
+                                    navegacao.popBackStack("inicio", inclusive = false)
+                                },
+                                aoAbrirPacientes = { navegacao.navigate("pacientes") },
+                                aoAbrirConsultas = { navegacao.navigate("consultas") },
+                                aoAbrirProcedimentos = { navegacao.navigate("procedimentos") },
+                                aoAbrirOrcamentos = { navegacao.navigate("orcamentos") },
+                                aoAbrirMedicos = { navegacao.navigate("medicos") },
+                                aoAbrirOpme = { navegacao.navigate("opme") },
+                                aoAbrirCadastroValores = {
+                                    if (ehAdministrador) navegacao.navigate("cadastroValores")
+                                },
+                                ehAdministrador = ehAdministrador
+                            )
+                        }
 
-                        "cadastroValores" -> {
+                        composable("cadastroValores") {
                             if (ehAdministrador) {
-                                TelaCadastroValores(aoVoltar = { telaAtual = "principal" })
+                                TelaCadastroValores(aoVoltar = voltar)
                             } else {
                                 PaginaPaciente("Acesso restrito ao administrador") {
-                                    TextButton(onClick = { telaAtual = "principal" }) {
+                                    TextButton(onClick = voltar) {
                                         Text("Voltar")
                                     }
                                 }
                             }
                         }
 
-                        "pacientes" -> TelaPacientes(aoVoltar = { telaAtual = "principal" })
-                        "consultas" -> TelaConsultas(aoVoltar = { telaAtual = "principal" })
-                        "procedimentos" -> TelaProcedimentos(aoVoltar = { telaAtual = "principal" })
-                        "orcamentos" -> TelaOrcamentos(aoVoltar = { telaAtual = "principal" })
-                        "medicos" -> TelaMedicos(aoVoltar = { telaAtual = "principal" })
-                        "opme" -> TelaOpme(aoVoltar = { telaAtual = "principal" })
+                        composable("pacientes") { TelaPacientes(aoVoltar = voltar) }
+                        composable("consultas") { TelaConsultas(aoVoltar = voltar) }
+                        composable("procedimentos") { TelaProcedimentos(aoVoltar = voltar) }
+                        composable("orcamentos") { TelaOrcamentos(aoVoltar = voltar) }
+                        composable("medicos") { TelaMedicos(aoVoltar = voltar) }
+                        composable("opme") { TelaOpme(aoVoltar = voltar) }
                     }
                 }
             }

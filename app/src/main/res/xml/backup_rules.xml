@@ -6,6 +6,10 @@
    See https://developer.android.com/about/versions/12/backup-restore
 -->
 <full-backup-content>
+    <exclude domain="database" path="rascunhos_orcamento.db" />
+    <exclude domain="database" path="rascunhos_orcamento.db-wal" />
+    <exclude domain="database" path="rascunhos_orcamento.db-shm" />
+    <exclude domain="database" path="rascunhos_orcamento.db-journal" />
     <!--
    <include domain="sharedpref" path="."/>
    <exclude domain="sharedpref" path="device.xml"/>
