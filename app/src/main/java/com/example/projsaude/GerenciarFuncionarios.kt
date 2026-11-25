@@ -1,15 +1,21 @@
 package com.example.projsaude
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import io.github.jan.supabase.postgrest.postgrest
@@ -33,18 +39,26 @@ private data class FuncionarioListado(
 fun BotaoGerenciarFuncionarios() {
     var aberto by remember { mutableStateOf(false) }
 
-    Button(
+    OutlinedCard(
         onClick = { aberto = true },
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 6.dp)
-            .height(55.dp),
-        shape = RoundedCornerShape(12.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = Color(0xFF085DD3)
-        )
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium
     ) {
-        Text("Gerenciar funcionários", fontSize = 18.sp)
+        Column(
+            modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp).padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically)
+        ) {
+            Text(
+                text = "Gerenciar funcionários",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = "Consulte perfis e desative acessos",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 
     if (aberto) {
@@ -54,12 +68,12 @@ fun BotaoGerenciarFuncionarios() {
 
 @Composable
 private fun TelaGerenciarFuncionarios(aoFechar: () -> Unit) {
-    val scope = rememberCoroutineScope()
+    val escopo = rememberCoroutineScope()
     val postgrest = SupabaseConfig.client.postgrest
+    val cores = MaterialTheme.colorScheme
+    val formas = MaterialTheme.shapes
 
-    var funcionarios by remember {
-        mutableStateOf<List<FuncionarioListado>>(emptyList())
-    }
+    var funcionarios by remember { mutableStateOf(emptyList<FuncionarioListado>()) }
     var selecionado by remember { mutableStateOf<FuncionarioListado?>(null) }
     var carregando by remember { mutableStateOf(true) }
     var desativando by remember { mutableStateOf(false) }
@@ -85,167 +99,271 @@ private fun TelaGerenciarFuncionarios(aoFechar: () -> Unit) {
         }
     }
 
+    fun voltar() {
+        if (desativando) return
+        if (selecionado != null) {
+            selecionado = null
+        } else {
+            aoFechar()
+        }
+    }
+
+    fun desativarFuncionario(funcionario: FuncionarioListado) {
+        if (desativando || funcionario.propria_conta || funcionario.ativo != true) return
+        desativando = true
+
+        escopo.launch {
+            try {
+                postgrest.rpc(
+                    "desativar_funcionario",
+                    buildJsonObject {
+                        put("p_funcionario_id", funcionario.id)
+                    }
+                )
+
+                selecionado = null
+                aviso = "Funcionário desativado."
+                tentativa++
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                selecionado = null
+                erroAcao = "Não foi possível confirmar a desativação. Confira a situação da conta na lista."
+                tentativa++
+            } finally {
+                desativando = false
+            }
+        }
+    }
+
     Dialog(
-        onDismissRequest = {
-            if (!desativando) aoFechar()
-        },
+        onDismissRequest = ::voltar,
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
             dismissOnClickOutside = false,
             dismissOnBackPress = !desativando
         )
     ) {
-        Surface(modifier = Modifier.fillMaxSize()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .safeDrawingPadding()
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = cores.background,
+            contentColor = cores.onBackground
+        ) {
+            Box(
+                modifier = Modifier.fillMaxSize().safeDrawingPadding(),
+                contentAlignment = Alignment.TopCenter
             ) {
-                Text(
-                    "Gerenciar funcionários",
-                    style = MaterialTheme.typography.headlineSmall
-                )
+                Column(
+                    modifier = Modifier
+                        .widthIn(max = 600.dp)
+                        .fillMaxWidth()
+                        .fillMaxHeight()
+                        .padding(horizontal = 20.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Gerenciar funcionários",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                brush = Brush.linearGradient(
+                                    listOf(Color(0xFF10345E), Color(0xFF064FB5))
+                                ),
+                                shape = formas.large
+                            )
+                            .padding(horizontal = 18.dp, vertical = 16.dp)
+                            .semantics { heading() },
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
 
-                aviso?.let { Text(it) }
-                erroAcao?.let {
-                    Text(it, color = MaterialTheme.colorScheme.error)
-                }
+                    aviso?.let { AvisoGerenciarFuncionarios(it) }
+                    erroAcao?.let { AvisoGerenciarFuncionarios(it, erro = true) }
 
-                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    when {
-                        carregando -> CircularProgressIndicator()
-
-                        erroLista -> Column(
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Text("Não foi possível carregar os funcionários.")
-                            OutlinedButton(onClick = { tentativa++ }) {
-                                Text("Tentar novamente")
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        when {
+                            carregando -> Row(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(22.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Text("Carregando funcionários…")
                             }
-                        }
 
-                        funcionarios.isEmpty() ->
-                            Text("Nenhum funcionário encontrado.")
+                            erroLista -> Column(
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                AvisoGerenciarFuncionarios(
+                                    "Não foi possível carregar os funcionários.",
+                                    erro = true
+                                )
 
-                        else -> LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(funcionarios, key = { it.id }) { funcionario ->
-                                val perfil = if (
-                                    funcionario.tipo_usuario == "administrador"
-                                ) {
-                                    "Administrador"
-                                } else {
-                                    "Colaborador"
+                                OutlinedButton(onClick = { tentativa++ }) {
+                                    Text("Tentar novamente")
                                 }
+                            }
 
-                                Card(modifier = Modifier.fillMaxWidth()) {
-                                    Column(
-                                        modifier = Modifier.padding(16.dp),
-                                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        Text(
-                                            funcionario.nome ?: "Funcionário",
-                                            style = MaterialTheme.typography.titleMedium
-                                        )
-                                        funcionario.email?.let { Text(it) }
-                                        Text(
-                                            "$perfil · ${
-                                                if (funcionario.ativo == true) "Ativo"
-                                                else "Inativo"
-                                            }"
-                                        )
+                            funcionarios.isEmpty() ->
+                                AvisoGerenciarFuncionarios("Nenhum funcionário encontrado.")
 
-                                        if (funcionario.propria_conta) {
-                                            Text("Sua conta")
-                                        } else if (funcionario.ativo == true) {
-                                            TextButton(
-                                                enabled = !desativando,
-                                                onClick = {
-                                                    aviso = null
-                                                    erroAcao = null
-                                                    selecionado = funcionario
-                                                }
-                                            ) {
-                                                Text("Desativar")
-                                            }
-                                        }
-                                    }
+                            else -> LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(vertical = 2.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                items(funcionarios, key = { it.id }) { funcionario ->
+                                    CartaoGerenciarFuncionario(
+                                        funcionario = funcionario,
+                                        confirmando = selecionado?.id == funcionario.id,
+                                        desativando = desativando,
+                                        aoSolicitarDesativacao = {
+                                            aviso = null
+                                            erroAcao = null
+                                            selecionado = funcionario
+                                        },
+                                        aoConfirmar = { desativarFuncionario(funcionario) },
+                                        aoCancelar = { selecionado = null }
+                                    )
                                 }
                             }
                         }
                     }
-                }
 
-                OutlinedButton(
-                    onClick = aoFechar,
-                    enabled = !desativando,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Voltar")
+                    OutlinedButton(
+                        onClick = ::voltar,
+                        enabled = !desativando,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (selecionado != null) "Cancelar seleção" else "Voltar")
+                    }
                 }
             }
         }
     }
+}
 
-    selecionado?.let { funcionario ->
-        val identificacao = funcionario.nome ?: funcionario.email ?: "este funcionário"
+@Composable
+private fun CartaoGerenciarFuncionario(
+    funcionario: FuncionarioListado,
+    confirmando: Boolean,
+    desativando: Boolean,
+    aoSolicitarDesativacao: () -> Unit,
+    aoConfirmar: () -> Unit,
+    aoCancelar: () -> Unit
+) {
+    val cores = MaterialTheme.colorScheme
+    val formas = MaterialTheme.shapes
+    val ativo = funcionario.ativo == true
+    val perfil = if (funcionario.tipo_usuario == "administrador") {
+        "Administrador"
+    } else {
+        "Colaborador"
+    }
 
-        AlertDialog(
-            onDismissRequest = {
-                if (!desativando) selecionado = null
-            },
-            title = { Text("Desativar funcionário?") },
-            text = {
+    OutlinedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = formas.medium,
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = cores.surface,
+            contentColor = cores.onSurface
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = funcionario.nome ?: "Funcionário",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+
+            funcionario.email?.let {
+                Text(it, color = cores.onSurfaceVariant)
+            }
+
+            Text(
+                text = perfil,
+                style = MaterialTheme.typography.bodyMedium,
+                color = cores.onSurfaceVariant
+            )
+
+            Surface(
+                shape = formas.small,
+                color = if (ativo) cores.tertiaryContainer else cores.surfaceVariant,
+                contentColor = if (ativo) cores.onTertiaryContainer else cores.onSurfaceVariant
+            ) {
                 Text(
-                    "O acesso de $identificacao será bloqueado. " +
-                            "O cadastro e o histórico serão mantidos."
+                    text = if (ativo) "Ativo" else "Inativo",
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    style = MaterialTheme.typography.labelLarge
                 )
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = !desativando,
-                    onClick = {
-                        desativando = true
-                        scope.launch {
-                            try {
-                                postgrest.rpc(
-                                    "desativar_funcionario",
-                                    buildJsonObject {
-                                        put("p_funcionario_id", funcionario.id)
-                                    }
-                                )
-                                selecionado = null
-                                aviso = "Funcionário desativado."
-                                tentativa++
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (_: Exception) {
-                                selecionado = null
-                                erroAcao =
-                                    "Não foi possível confirmar a desativação. " +
-                                            "Confira o status da conta na lista."
-                                tentativa++
-                            } finally {
-                                desativando = false
-                            }
-                        }
+            }
+
+            when {
+                funcionario.propria_conta -> Text(
+                    text = "Sua conta",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = cores.onSurfaceVariant
+                )
+
+                confirmando && ativo -> {
+                    val identificacao = funcionario.nome ?: funcionario.email ?: "este funcionário"
+
+                    AvisoGerenciarFuncionarios(
+                        "O acesso de $identificacao será bloqueado. O cadastro e o histórico serão mantidos.",
+                        erro = true
+                    )
+
+                    Button(
+                        onClick = aoConfirmar,
+                        enabled = !desativando,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = cores.error,
+                            contentColor = cores.onError
+                        )
+                    ) {
+                        Text(if (desativando) "Desativando…" else "Confirmar desativação")
                     }
-                ) {
-                    Text(if (desativando) "Desativando…" else "Confirmar")
+
+                    TextButton(onClick = aoCancelar, enabled = !desativando) {
+                        Text("Cancelar")
+                    }
                 }
-            },
-            dismissButton = {
-                TextButton(
+
+                ativo -> TextButton(
+                    onClick = aoSolicitarDesativacao,
                     enabled = !desativando,
-                    onClick = { selecionado = null }
+                    colors = ButtonDefaults.textButtonColors(contentColor = cores.error)
                 ) {
-                    Text("Cancelar")
+                    Text("Desativar")
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun AvisoGerenciarFuncionarios(texto: String, erro: Boolean = false) {
+    val cores = MaterialTheme.colorScheme
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { liveRegion = LiveRegionMode.Polite },
+        shape = MaterialTheme.shapes.small,
+        color = if (erro) cores.errorContainer else cores.secondaryContainer,
+        contentColor = if (erro) cores.onErrorContainer else cores.onSecondaryContainer
+    ) {
+        Text(
+            text = texto,
+            modifier = Modifier.padding(12.dp),
+            style = MaterialTheme.typography.bodyMedium
         )
     }
 }

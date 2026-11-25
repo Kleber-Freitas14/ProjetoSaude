@@ -1,12 +1,21 @@
 package com.example.projsaude
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
@@ -69,6 +78,9 @@ private data class NovaConsulta(
 fun TelaConsultas(aoVoltar: () -> Unit) {
     val cliente = SupabaseConfig.client
     val escopo = rememberCoroutineScope()
+    val cores = MaterialTheme.colorScheme
+    val formas = MaterialTheme.shapes
+
     val formatoData = remember {
         DateTimeFormatter.ofPattern("dd/MM/uuuu").withResolverStyle(ResolverStyle.STRICT)
     }
@@ -89,6 +101,7 @@ fun TelaConsultas(aoVoltar: () -> Unit) {
     var horario by remember { mutableStateOf("") }
     var observacoes by remember { mutableStateOf("") }
     var mensagem by remember { mutableStateOf("") }
+    var consultaGravada by remember { mutableStateOf(false) }
     var salvando by remember { mutableStateOf(false) }
     var consultas by remember { mutableStateOf(emptyList<ConsultaSalva>()) }
     var carregando by remember { mutableStateOf(true) }
@@ -203,195 +216,359 @@ fun TelaConsultas(aoVoltar: () -> Unit) {
         }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().safeDrawingPadding().imePadding(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+    fun cadastrarConsulta() {
+        if (salvando) return
+        consultaGravada = false
+
+        val pacienteId = paciente?.id
+        val medicoId = medico?.id
+        val dia = runCatching { LocalDate.parse(data.trim(), formatoData) }.getOrNull()
+        val hora = runCatching { LocalTime.parse(horario.trim(), formatoHora) }.getOrNull()
+        val autor = cliente.auth.currentUserOrNull()?.id
+
+        if (pacienteId == null || medicoId == null || dia == null || hora == null) {
+            mensagem = "Selecione o paciente e o médico e confira a data e o horário."
+            return
+        }
+
+        if (autor == null) {
+            mensagem = "Entre novamente para cadastrar a consulta."
+            return
+        }
+
+        val nova = NovaConsulta(
+            paciente_id = pacienteId,
+            profissional_id = medicoId,
+            data_consulta = dia.toString(),
+            horario = hora.format(formatoHora),
+            observacoes = observacoes.trim(),
+            criado_por = autor
+        )
+
+        salvando = true
+        mensagem = ""
+
+        escopo.launch {
+            try {
+                cliente.from("consultas").insert(nova)
+                paciente = null
+                medico = null
+                buscaPaciente = ""
+                buscaMedico = ""
+                data = ""
+                horario = ""
+                observacoes = ""
+                consultaGravada = true
+                mensagem = "Consulta salva no banco."
+                recarga++
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                mensagem =
+                    "Não foi possível confirmar a gravação. Atualize a lista antes de tentar novamente."
+            } finally {
+                salvando = false
+            }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(cores.background)
+            .safeDrawingPadding()
+            .imePadding(),
+        contentAlignment = Alignment.TopCenter
     ) {
-        item {
-            Text("Consultas", style = MaterialTheme.typography.headlineMedium)
-
-            OutlinedTextField(
-                value = buscaPaciente,
-                onValueChange = {
-                    paciente = null
-                    sugestoesPacientes = emptyList()
-                    buscaPaciente = it
-                },
-                label = { Text("Nome ou CPF do paciente") },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !salvando,
-                singleLine = true
-            )
-
-            if (avisoPaciente.isNotEmpty()) Text(avisoPaciente)
-        }
-
-        items(sugestoesPacientes, key = { "paciente-${it.id}" }) { opcao ->
-            OutlinedButton(
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !salvando,
-                onClick = {
-                    paciente = opcao
-                    buscaPaciente = opcao.rotulo()
-                    sugestoesPacientes = emptyList()
-                }
-            ) {
-                Text(opcao.rotulo())
+        LazyColumn(
+            modifier = Modifier.widthIn(max = 600.dp).fillMaxWidth().fillMaxHeight(),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Text(
+                    text = "Consultas",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            brush = Brush.linearGradient(
+                                listOf(Color(0xFF10345E), Color(0xFF064FB5))
+                            ),
+                            shape = formas.large
+                        )
+                        .padding(horizontal = 18.dp, vertical = 16.dp)
+                        .semantics { heading() },
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
             }
-        }
 
-        item {
-            OutlinedTextField(
-                value = buscaMedico,
-                onValueChange = {
-                    medico = null
-                    sugestoesMedicos = emptyList()
-                    buscaMedico = it
-                },
-                label = { Text("Nome do médico") },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !salvando,
-                singleLine = true
-            )
-
-            if (avisoMedico.isNotEmpty()) Text(avisoMedico)
-        }
-
-        items(sugestoesMedicos, key = { "medico-${it.id}" }) { opcao ->
-            OutlinedButton(
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !salvando,
-                onClick = {
-                    medico = opcao
-                    buscaMedico = opcao.rotulo()
-                    sugestoesMedicos = emptyList()
-                }
-            ) {
-                Text(opcao.rotulo())
-            }
-        }
-
-        item {
-            OutlinedTextField(
-                value = data,
-                onValueChange = { data = it },
-                label = { Text("Data (DD/MM/AAAA)") },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !salvando,
-                singleLine = true
-            )
-            OutlinedTextField(
-                value = horario,
-                onValueChange = { horario = it },
-                label = { Text("Horário (HH:MM)") },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !salvando,
-                singleLine = true
-            )
-            OutlinedTextField(
-                value = observacoes,
-                onValueChange = { observacoes = it },
-                label = { Text("Observações") },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !salvando
-            )
-        }
-
-        item {
-            Button(
-                enabled = !salvando,
-                modifier = Modifier.fillMaxWidth(),
-                onClick = {
-                    val pacienteId = paciente?.id
-                    val medicoId = medico?.id
-                    val dia = runCatching { LocalDate.parse(data.trim(), formatoData) }.getOrNull()
-                    val hora = runCatching { LocalTime.parse(horario.trim(), formatoHora) }.getOrNull()
-                    val autor = cliente.auth.currentUserOrNull()?.id
-
-                    if (pacienteId == null || medicoId == null || dia == null || hora == null) {
-                        mensagem = "Selecione o paciente e o médico e confira a data e o horário."
-                        return@Button
-                    }
-                    if (autor == null) {
-                        mensagem = "Entre novamente para cadastrar a consulta."
-                        return@Button
-                    }
-
-                    val nova = NovaConsulta(
-                        paciente_id = pacienteId,
-                        profissional_id = medicoId,
-                        data_consulta = dia.toString(),
-                        horario = hora.format(formatoHora),
-                        observacoes = observacoes.trim(),
-                        criado_por = autor
+            item {
+                OutlinedCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = formas.large,
+                    colors = CardDefaults.outlinedCardColors(
+                        containerColor = cores.surface,
+                        contentColor = cores.onSurface
                     )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = "Nova consulta",
+                            modifier = Modifier.semantics { heading() },
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
 
-                    salvando = true
-                    mensagem = ""
+                        OutlinedTextField(
+                            value = buscaPaciente,
+                            onValueChange = {
+                                paciente = null
+                                sugestoesPacientes = emptyList()
+                                buscaPaciente = it
+                            },
+                            label = { Text("Nome ou CPF do paciente") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = formas.small,
+                            enabled = !salvando,
+                            singleLine = true
+                        )
 
-                    escopo.launch {
-                        try {
-                            cliente.from("consultas").insert(nova)
-                            paciente = null
-                            medico = null
-                            buscaPaciente = ""
-                            buscaMedico = ""
-                            data = ""
-                            horario = ""
-                            observacoes = ""
-                            mensagem = "Consulta salva no banco."
-                            recarga++
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (_: Exception) {
-                            mensagem = "Não foi possível confirmar a gravação. Atualize a lista antes de tentar novamente."
-                        } finally {
-                            salvando = false
+                        if (avisoPaciente.isNotEmpty()) {
+                            Text(
+                                text = avisoPaciente,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = cores.onSurfaceVariant
+                            )
+                        }
+
+                        sugestoesPacientes.forEach { opcao ->
+                            OutlinedButton(
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !salvando,
+                                onClick = {
+                                    paciente = opcao
+                                    buscaPaciente = opcao.rotulo()
+                                    sugestoesPacientes = emptyList()
+                                }
+                            ) {
+                                Text(opcao.rotulo())
+                            }
+                        }
+
+                        OutlinedTextField(
+                            value = buscaMedico,
+                            onValueChange = {
+                                medico = null
+                                sugestoesMedicos = emptyList()
+                                buscaMedico = it
+                            },
+                            label = { Text("Nome do médico") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = formas.small,
+                            enabled = !salvando,
+                            singleLine = true
+                        )
+
+                        if (avisoMedico.isNotEmpty()) {
+                            Text(
+                                text = avisoMedico,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = cores.onSurfaceVariant
+                            )
+                        }
+
+                        sugestoesMedicos.forEach { opcao ->
+                            OutlinedButton(
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !salvando,
+                                onClick = {
+                                    medico = opcao
+                                    buscaMedico = opcao.rotulo()
+                                    sugestoesMedicos = emptyList()
+                                }
+                            ) {
+                                Text(opcao.rotulo())
+                            }
+                        }
+
+                        HorizontalDivider(color = cores.outlineVariant)
+
+                        OutlinedTextField(
+                            value = data,
+                            onValueChange = { data = it },
+                            label = { Text("Data da consulta") },
+                            placeholder = { Text("DD/MM/AAAA") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = formas.small,
+                            enabled = !salvando,
+                            singleLine = true
+                        )
+
+                        OutlinedTextField(
+                            value = horario,
+                            onValueChange = { horario = it },
+                            label = { Text("Horário") },
+                            placeholder = { Text("HH:MM") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = formas.small,
+                            enabled = !salvando,
+                            singleLine = true
+                        )
+
+                        OutlinedTextField(
+                            value = observacoes,
+                            onValueChange = { observacoes = it },
+                            label = { Text("Observações") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = formas.small,
+                            enabled = !salvando
+                        )
+
+                        if (mensagem.isNotEmpty()) {
+                            AvisoConsulta(mensagem, erro = !consultaGravada)
+                        }
+
+                        Button(
+                            onClick = ::cadastrarConsulta,
+                            enabled = !salvando,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                            shape = formas.small
+                        ) {
+                            if (salvando) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = cores.onSurfaceVariant
+                                )
+                                Spacer(Modifier.width(10.dp))
+                            }
+                            Text(if (salvando) "Salvando…" else "Cadastrar consulta")
                         }
                     }
                 }
-            ) {
-                Text(if (salvando) "Salvando…" else "Cadastrar consulta")
             }
 
-            if (mensagem.isNotEmpty()) Text(mensagem)
-        }
+            item {
+                Text(
+                    text = "Consultas cadastradas",
+                    modifier = Modifier.semantics { heading() },
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
 
-        item {
-            HorizontalDivider()
-            Text("Consultas cadastradas", style = MaterialTheme.typography.titleMedium)
-            TextButton(onClick = { recarga++ }, enabled = !carregando && !salvando) {
-                Text("Atualizar lista")
+                TextButton(onClick = { recarga++ }, enabled = !carregando && !salvando) {
+                    Text(if (erroLista) "Tentar novamente" else "Atualizar lista")
+                }
+
+                when {
+                    carregando -> Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(22.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Text("Carregando consultas…")
+                    }
+
+                    erroLista -> AvisoConsulta(
+                        "Não foi possível carregar a lista de consultas.",
+                        erro = true
+                    )
+
+                    consultas.isEmpty() -> AvisoConsulta("Nenhuma consulta cadastrada.")
+                }
             }
-            when {
-                carregando -> CircularProgressIndicator()
-                erroLista -> Text("Não foi possível carregar a lista de consultas.")
-                consultas.isEmpty() -> Text("Nenhuma consulta cadastrada.")
-            }
-        }
 
-        if (!carregando && !erroLista) {
-            items(consultas, key = { it.id }) { consulta ->
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp)) {
-                        val dia = runCatching {
-                            LocalDate.parse(consulta.data_consulta).format(formatoData)
-                        }.getOrDefault(consulta.data_consulta)
+            if (!carregando && !erroLista) {
+                items(consultas, key = { it.id }) { consulta ->
+                    val dia = runCatching {
+                        LocalDate.parse(consulta.data_consulta).format(formatoData)
+                    }.getOrDefault(consulta.data_consulta)
 
-                        Text("Paciente: ${consulta.paciente?.nome_completo ?: "Indisponível"}")
-                        Text("$dia às ${consulta.horario.take(5)}")
-                        Text("Médico: ${consulta.profissional?.rotulo() ?: "Indisponível"}")
-                        consulta.observacoes?.takeIf { it.isNotBlank() }?.let { Text(it) }
+                    OutlinedCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = formas.medium,
+                        colors = CardDefaults.outlinedCardColors(
+                            containerColor = cores.surface,
+                            contentColor = cores.onSurface
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Surface(
+                                shape = formas.small,
+                                color = cores.primaryContainer,
+                                contentColor = cores.onPrimaryContainer
+                            ) {
+                                Text(
+                                    text = "$dia às ${consulta.horario.take(5)}",
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
+
+                            Text(
+                                text = consulta.paciente?.nome_completo ?: "Paciente indisponível",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+
+                            Text(
+                                text = "Médico: ${consulta.profissional?.rotulo() ?: "Indisponível"}",
+                                color = cores.onSurfaceVariant
+                            )
+
+                            consulta.observacoes?.takeIf { it.isNotBlank() }?.let { texto ->
+                                HorizontalDivider(color = cores.outlineVariant)
+                                Text(
+                                    text = texto,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = cores.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
                 }
             }
-        }
 
-        item {
-            OutlinedButton(aoVoltar, Modifier.fillMaxWidth(), enabled = !salvando) {
-                Text("Voltar")
+            item {
+                OutlinedButton(
+                    onClick = aoVoltar,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !salvando
+                ) {
+                    Text("Voltar")
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun AvisoConsulta(texto: String, erro: Boolean = false) {
+    val cores = MaterialTheme.colorScheme
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { liveRegion = LiveRegionMode.Polite },
+        shape = MaterialTheme.shapes.small,
+        color = if (erro) cores.errorContainer else cores.secondaryContainer,
+        contentColor = if (erro) cores.onErrorContainer else cores.onSecondaryContainer
+    ) {
+        Text(
+            text = texto,
+            modifier = Modifier.padding(12.dp),
+            style = MaterialTheme.typography.bodyMedium
+        )
     }
 }

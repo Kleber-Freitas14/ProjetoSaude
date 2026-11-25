@@ -2,12 +2,19 @@ package com.example.projsaude
 
 import android.util.Log
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
@@ -254,169 +261,349 @@ fun TelaOrcamentosPaciente(aoVoltar: () -> Unit) {
 
     BackHandler { voltar() }
 
-    Column(
+    val cores = MaterialTheme.colorScheme
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .safeDrawingPadding()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .background(cores.background)
+            .safeDrawingPadding(),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Column(
+            modifier = Modifier
+                .widthIn(max = 600.dp)
+                .fillMaxWidth()
+                .fillMaxHeight()
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.large,
+                color = cores.primary,
+                contentColor = cores.onPrimary
+            ) {
+                Text(
+                    text = if (aberto == null) "Meus orçamentos" else "Detalhes do orçamento",
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp)
+                        .semantics { heading() },
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            if (mensagem.isNotBlank()) {
+                AvisoOrcamentoPaciente(mensagem)
+            }
+
+            key(abertoId) {
+                LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues(vertical = 2.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    when {
+                        carregando -> item {
+                            Row(
+                                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(22.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Text(
+                                    if (aceitePendenteId != null) "Conferindo o aceite…"
+                                    else "Carregando seus orçamentos…"
+                                )
+                            }
+                        }
+
+                        erroAoCarregar != null -> item {
+                            AvisoOrcamentoPaciente(erroAoCarregar.orEmpty(), erro = true)
+                            TextButton(onClick = { recarga++ }) {
+                                Text("Tentar novamente")
+                            }
+                        }
+
+                        aberto != null -> {
+                            item {
+                                CartaoOrcamentoPaciente {
+                                    CabecalhoPropostaPaciente(aberto)
+
+                                    HorizontalDivider(color = cores.outlineVariant)
+
+                                    Text(
+                                        text = "Total do orçamento",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = cores.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = totalAberto?.let { moeda.format(it) }
+                                            ?: "Valor indisponível",
+                                        style = MaterialTheme.typography.headlineSmall,
+                                        color = cores.primary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            if (aberto.orcamento.status == "Pendente") {
+                                item {
+                                    if (confirmando && totalAberto != null) {
+                                        CartaoOrcamentoPaciente {
+                                            Text(
+                                                text = "Confirmar aceite",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            Text("Você confirma o aceite do orçamento de ${moeda.format(totalAberto)}?")
+
+                                            Button(
+                                                onClick = { enviarAceite(aberto.orcamento.id) },
+                                                enabled = !aceitando,
+                                                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
+                                            ) {
+                                                Text("Confirmar aceite agora")
+                                            }
+
+                                            TextButton(
+                                                onClick = { confirmando = false },
+                                                modifier = Modifier.align(Alignment.CenterHorizontally)
+                                            ) {
+                                                Text("Cancelar")
+                                            }
+                                        }
+                                    } else {
+                                        Button(
+                                            onClick = {
+                                                if (totalAberto == null) {
+                                                    mensagem = "O total do orçamento está indisponível para sua conta."
+                                                } else {
+                                                    mensagem = ""
+                                                    confirmando = true
+                                                }
+                                            },
+                                            enabled = !aceitando,
+                                            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
+                                        ) {
+                                            Text(
+                                                if (aceitando) "Registrando aceite…"
+                                                else "Revisar e aceitar orçamento"
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (aberto.periodos_internacao.isNotEmpty()) {
+                                item {
+                                    TituloSecaoOrcamentoPaciente("Períodos de internação")
+                                }
+
+                                items(
+                                    aberto.periodos_internacao,
+                                    key = { "periodo-${it.id}" }
+                                ) { periodo ->
+                                    CartaoOrcamentoPaciente {
+                                        Text(
+                                            text = periodo.tipo_acomodacao,
+                                            style = MaterialTheme.typography.titleMedium
+                                        )
+                                        Text(
+                                            text = "${dataOrcamentoPaciente(periodo.data_entrada)} a " +
+                                                    dataOrcamentoPaciente(periodo.data_saida),
+                                            color = cores.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (aberto.itens_composicao.isNotEmpty()) {
+                                item {
+                                    TituloSecaoOrcamentoPaciente("Itens do orçamento")
+                                }
+
+                                items(
+                                    aberto.itens_composicao,
+                                    key = { "item-${it.id}" }
+                                ) { item ->
+                                    val unitario = item.valor_unitario.content.toBigDecimalOrNull()
+                                    val subtotal = item.valor_total.content.toBigDecimalOrNull()
+
+                                    CartaoOrcamentoPaciente {
+                                        Text(
+                                            text = item.descricao,
+                                            style = MaterialTheme.typography.titleMedium
+                                        )
+                                        if (unitario != null && subtotal != null) {
+                                            Text(
+                                                text = "${item.quantidade.content} × ${moeda.format(unitario)}",
+                                                color = cores.onSurfaceVariant
+                                            )
+                                            Text(
+                                                text = moeda.format(subtotal),
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        } else {
+                                            Text("Valor indisponível", color = cores.onSurfaceVariant)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        composicoes.isEmpty() -> item {
+                            AvisoOrcamentoPaciente("Você ainda não tem orçamentos disponíveis.")
+                        }
+
+                        else -> items(composicoes, key = { it.orcamento.id }) { composicao ->
+                            val total = remember(composicao) { composicao.total() }
+
+                            CartaoOrcamentoPaciente {
+                                CabecalhoPropostaPaciente(composicao)
+
+                                total?.let {
+                                    Text(
+                                        text = "Total: ${moeda.format(it)}",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = cores.primary,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        abertoId = composicao.orcamento.id
+                                        mensagem = ""
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Ver orçamento")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    onClick = ::voltar,
+                    enabled = !aceitando && (!carregando || aceitePendenteId == null),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Voltar")
+                }
+
+                if (!carregando && erroAoCarregar == null) {
+                    TextButton(
+                        onClick = { recarga++ },
+                        enabled = !aceitando && !confirmando,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Atualizar")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CartaoOrcamentoPaciente(conteudo: @Composable ColumnScope.() -> Unit) {
+    val cores = MaterialTheme.colorScheme
+
+    OutlinedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = cores.surface,
+            contentColor = cores.onSurface
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            content = conteudo
+        )
+    }
+}
+
+@Composable
+private fun CabecalhoPropostaPaciente(composicao: ComposicaoDoPaciente) {
+    val cores = MaterialTheme.colorScheme
+    val orcamento = composicao.orcamento
+    val aceito = orcamento.status == "Aceito"
+
+    Text(
+        text = orcamento.procedimento?.nome ?: "Orçamento",
+        style = MaterialTheme.typography.titleLarge,
+        fontWeight = FontWeight.SemiBold
+    )
+
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = if (aceito) cores.tertiaryContainer else cores.secondaryContainer,
+        contentColor = if (aceito) cores.onTertiaryContainer else cores.onSecondaryContainer
     ) {
         Text(
-            if (aberto == null) "Meus orçamentos" else "Detalhes do orçamento",
-            style = MaterialTheme.typography.headlineMedium
+            text = orcamento.status ?: "Situação não informada",
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.labelLarge
         )
+    }
 
-        if (mensagem.isNotBlank()) {
-            Text(mensagem)
-        }
+    composicao.salvo_em?.let {
+        Text(
+            text = "Composição de ${dataComposicaoPaciente(it)}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = cores.onSurfaceVariant
+        )
+    }
 
-        LazyColumn(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            when {
-                carregando -> item { CircularProgressIndicator() }
+    orcamento.data_prevista?.let {
+        Text(
+            text = "Data prevista: ${dataOrcamentoPaciente(it)}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = cores.onSurfaceVariant
+        )
+    }
+}
 
-                erroAoCarregar != null -> item {
-                    Text(erroAoCarregar.orEmpty(), color = MaterialTheme.colorScheme.error)
-                    TextButton(onClick = { recarga++ }) { Text("Tentar novamente") }
-                }
+@Composable
+private fun TituloSecaoOrcamentoPaciente(titulo: String) {
+    Text(
+        text = titulo,
+        modifier = Modifier.semantics { heading() },
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onBackground
+    )
+}
 
-                aberto != null -> {
-                    item {
-                        Text(aberto.orcamento.procedimento?.nome ?: "Orçamento")
-                        Text("Status: ${aberto.orcamento.status ?: "Não informado"}")
-                        aberto.salvo_em?.let {
-                            Text("Composição de ${dataComposicaoPaciente(it)}")
-                        }
-                        aberto.orcamento.data_prevista?.let {
-                            Text("Data prevista: ${dataOrcamentoPaciente(it)}")
-                        }
-                    }
+@Composable
+private fun AvisoOrcamentoPaciente(texto: String, erro: Boolean = false) {
+    val cores = MaterialTheme.colorScheme
 
-                    items(aberto.periodos_internacao, key = { "periodo-${it.id}" }) { periodo ->
-                        Text(
-                            "${periodo.tipo_acomodacao}: " +
-                                    "${dataOrcamentoPaciente(periodo.data_entrada)} a " +
-                                    dataOrcamentoPaciente(periodo.data_saida)
-                        )
-                    }
-
-                    items(aberto.itens_composicao, key = { "item-${it.id}" }) { item ->
-                        val unitario = item.valor_unitario.content.toBigDecimalOrNull()
-                        val subtotal = item.valor_total.content.toBigDecimalOrNull()
-
-                        Card(Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(12.dp)) {
-                                Text(item.descricao, style = MaterialTheme.typography.titleMedium)
-                                if (unitario != null && subtotal != null) {
-                                    Text(
-                                        "${item.quantidade.content} × ${moeda.format(unitario)} " +
-                                                "= ${moeda.format(subtotal)}"
-                                    )
-                                } else {
-                                    Text("Valor indisponível")
-                                }
-                            }
-                        }
-                    }
-
-                    item {
-                        Text(
-                            totalAberto?.let { "Total: ${moeda.format(it)}" }
-                                ?: "Total indisponível",
-                            style = MaterialTheme.typography.titleLarge
-                        )
-
-                        when (aberto.orcamento.status) {
-                            "Aceito" -> Text("Aceite registrado.")
-                            "Em espera" -> Text("O orçamento está em espera.")
-                            else -> Unit
-                        }
-                    }
-                }
-
-                composicoes.isEmpty() -> item {
-                    Text("Você ainda não tem orçamentos disponíveis.")
-                }
-
-                else -> items(composicoes, key = { it.orcamento.id }) { composicao ->
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(12.dp)) {
-                            Text(
-                                composicao.orcamento.procedimento?.nome ?: "Orçamento",
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text("Status: ${composicao.orcamento.status ?: "Não informado"}")
-                            composicao.salvo_em?.let {
-                                Text("Composição de ${dataComposicaoPaciente(it)}")
-                            }
-                            composicao.total()?.let {
-                                Text("Total: ${moeda.format(it)}")
-                            }
-
-                            TextButton(
-                                onClick = {
-                                    abertoId = composicao.orcamento.id
-                                    mensagem = ""
-                                }
-                            ) { Text("Ver orçamento") }
-                        }
-                    }
-                }
-            }
-        }
-
-        if (!carregando && erroAoCarregar == null &&
-            aberto != null && aberto.orcamento.status == "Pendente"
-        ) {
-            if (confirmando && totalAberto != null) {
-                Text("Confirme o aceite do orçamento de ${moeda.format(totalAberto)}.")
-
-                Button(
-                    onClick = { enviarAceite(aberto.orcamento.id) },
-                    enabled = !aceitando,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Confirmar aceite agora")
-                }
-
-                TextButton(onClick = { confirmando = false }) {
-                    Text("Cancelar")
-                }
-            } else {
-                Button(
-                    onClick = {
-                        if (totalAberto == null) {
-                            mensagem = "O total do orçamento está indisponível para sua conta."
-                        } else {
-                            mensagem = ""
-                            confirmando = true
-                        }
-                    },
-                    enabled = !aceitando,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(if (aceitando) "Registrando aceite…" else "Revisar e aceitar orçamento")
-                }
-            }
-        }
-
-        if (!carregando && erroAoCarregar == null) {
-            TextButton(
-                onClick = { recarga++ },
-                enabled = !aceitando && !confirmando
-            ) {
-                Text("Atualizar")
-            }
-        }
-
-        OutlinedButton(
-            onClick = ::voltar,
-            enabled = !aceitando && (!carregando || aceitePendenteId == null),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Voltar")
-        }
+    Surface(
+        modifier = Modifier.fillMaxWidth()
+            .semantics { liveRegion = LiveRegionMode.Polite },
+        shape = MaterialTheme.shapes.small,
+        color = if (erro) cores.errorContainer else cores.primaryContainer,
+        contentColor = if (erro) cores.onErrorContainer else cores.onPrimaryContainer
+    ) {
+        Text(
+            text = texto,
+            modifier = Modifier.padding(12.dp),
+            style = MaterialTheme.typography.bodyMedium
+        )
     }
 }

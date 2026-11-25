@@ -14,13 +14,16 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import io.github.jan.supabase.auth.auth
 import java.net.HttpURLConnection
 import java.net.URL
@@ -36,6 +39,12 @@ private enum class PerfilFuncionario(val codigo: String, val rotulo: String) {
     COLABORADOR("colaborador", "Colaborador"),
     ADMINISTRADOR("administrador", "Administrador")
 }
+
+private data class ModuloPrincipal(
+    val titulo: String,
+    val descricao: String,
+    val aoAbrir: () -> Unit
+)
 
 @Composable
 fun TelaPrincipal(
@@ -63,49 +72,145 @@ fun TelaPrincipal(
         return
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFFF5F8FC))
-            .safeDrawingPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+    val modulos = listOf(
+        ModuloPrincipal("Pacientes", "Cadastro e consulta", aoAbrirPacientes),
+        ModuloPrincipal("Consultas", "Agenda de atendimentos", aoAbrirConsultas),
+        ModuloPrincipal("Orçamentos", "Pedidos e composição", aoAbrirOrcamentos),
+        ModuloPrincipal("Procedimentos", "Cadastro de procedimentos", aoAbrirProcedimentos),
+        ModuloPrincipal("Médicos", "Cadastro da equipe médica", aoAbrirMedicos),
+        ModuloPrincipal("OPME", "Materiais e estoque", aoAbrirOpme)
+    )
+    val cores = MaterialTheme.colorScheme
+
+    Box(
+        modifier = Modifier.fillMaxSize().background(cores.surface).safeDrawingPadding(),
+        contentAlignment = Alignment.TopCenter
     ) {
-        Text(
-            text = "Projeto Saúde",
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Bold,
-            color = AzulPrincipal
-        )
-        Spacer(Modifier.height(8.dp))
-        Text("Menu Principal", fontSize = 20.sp, color = Color.DarkGray)
-        Spacer(Modifier.height(24.dp))
-
-        if (mensagemMenu.isNotEmpty()) {
-            Text(mensagemMenu, color = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(12.dp))
-        }
-
-        BotaoMenu("Pacientes", aoAbrirPacientes)
-        BotaoMenu("Consultas", aoAbrirConsultas)
-        BotaoMenu("Procedimentos", aoAbrirProcedimentos)
-        BotaoMenu("Orçamentos", aoAbrirOrcamentos)
-        BotaoMenu("Médicos", aoAbrirMedicos)
-        BotaoMenu("OPME", aoAbrirOpme)
-
-        if (ehAdministrador) {
-            BotaoMenu("Cadastro de Valores", aoAbrirCadastroValores)
-            BotaoMenu("Cadastrar funcionário") {
-                mensagemMenu = ""
-                mostrarCadastro = true
+        Column(
+            modifier = Modifier
+                .widthIn(max = 680.dp)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        brush = Brush.linearGradient(listOf(Color(0xFF12345B), AzulPrincipal)),
+                        shape = RoundedCornerShape(24.dp)
+                    )
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Projeto Saúde",
+                    modifier = Modifier.semantics { heading() },
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                Text(
+                    text = if (ehAdministrador) "Acesso administrativo" else "Acesso do colaborador",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFFE2EDFF)
+                )
             }
-            BotaoGerenciarFuncionarios()
-        }
 
-        Spacer(Modifier.height(16.dp))
-        OutlinedButton(onClick = aoSair, modifier = Modifier.fillMaxWidth()) {
-            Text("Sair")
+            if (mensagemMenu.isNotEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = cores.primaryContainer,
+                    contentColor = cores.onPrimaryContainer
+                ) {
+                    Text(
+                        text = mensagemMenu,
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
+
+            Text(
+                text = "Atendimento",
+                modifier = Modifier.semantics { heading() },
+                style = MaterialTheme.typography.titleLarge
+            )
+
+            val escalaFonte = LocalDensity.current.fontScale
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val colunas = if (maxWidth >= 320.dp && escalaFonte <= 1.3f) 2 else 1
+
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    modulos.chunked(colunas).forEach { linha ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            linha.forEach { modulo ->
+                                CartaoModuloPrincipal(modulo, Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (ehAdministrador) {
+                Text(
+                    text = "Administração",
+                    modifier = Modifier.semantics { heading() },
+                    style = MaterialTheme.typography.titleLarge
+                )
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CartaoModuloPrincipal(
+                        ModuloPrincipal(
+                            "Cadastro de valores",
+                            "Preços usados nos orçamentos",
+                            aoAbrirCadastroValores
+                        ),
+                        Modifier.fillMaxWidth()
+                    )
+                    CartaoModuloPrincipal(
+                        ModuloPrincipal("Cadastrar funcionário", "Acesso de um novo usuário") {
+                            mensagemMenu = ""
+                            mostrarCadastro = true
+                        },
+                        Modifier.fillMaxWidth()
+                    )
+                    BotaoGerenciarFuncionarios()
+                }
+            }
+
+            OutlinedButton(onClick = aoSair, modifier = Modifier.fillMaxWidth()) {
+                Text("Sair")
+            }
+        }
+    }
+}
+
+@Composable
+private fun CartaoModuloPrincipal(modulo: ModuloPrincipal, modifier: Modifier) {
+    val cores = MaterialTheme.colorScheme
+
+    OutlinedCard(
+        onClick = modulo.aoAbrir,
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.outlinedCardColors(containerColor = cores.surface)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp).padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically)
+        ) {
+            Text(
+                text = modulo.titulo,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = modulo.descricao,
+                style = MaterialTheme.typography.bodySmall,
+                color = cores.onSurfaceVariant
+            )
         }
     }
 }
@@ -323,20 +428,5 @@ private suspend fun cadastrarFuncionario(
         } finally {
             conexao.disconnect()
         }
-    }
-}
-
-@Composable
-private fun BotaoMenu(titulo: String, aoClicar: () -> Unit) {
-    Button(
-        onClick = aoClicar,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 6.dp)
-            .height(55.dp),
-        shape = RoundedCornerShape(12.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = AzulPrincipal)
-    ) {
-        Text(titulo, fontSize = 18.sp)
     }
 }

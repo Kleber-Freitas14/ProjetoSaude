@@ -1,6 +1,9 @@
 package com.example.projsaude
 
+import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -9,27 +12,45 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
+import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.storage.storage
 import java.text.Normalizer
 import java.time.LocalDate
+import java.time.OffsetDateTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 import java.time.format.ResolverStyle
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 private enum class PaginaOrcamentos(val titulo: String) {
     MENU("Orçamentos"),
+    PEDIDOS("Pedidos recebidos"),
     NOVO("Novo orçamento"),
     RASCUNHOS("Retomar composição"),
     ANALISE("Orçamentos em análise"),
@@ -74,6 +95,18 @@ private data class MedicoDoOrcamento(
 private data class ProcedimentoDoOrcamento(val id: String, val nome: String)
 
 @Serializable
+private data class PedidoRecebido(
+    val id: String,
+    val paciente_id: String,
+    val nome_paciente: String,
+    val cpf: String? = null,
+    val foto_path: String,
+    val criado_em: String
+) {
+    fun paciente() = PacienteDoOrcamento(paciente_id, nome_paciente, cpf)
+}
+
+@Serializable
 private data class OrcamentoDaEquipe(
     val id: String,
     val status: String? = null,
@@ -104,7 +137,8 @@ private data class NovoOrcamentoEquipe(
     val hospedagem: String,
     val necessita_uti: Boolean,
     val criado_por: String,
-    val status: String
+    val status: String,
+    val pedido_medico_id: String? = null
 )
 
 @Serializable
@@ -125,14 +159,27 @@ private data class OrcamentoParaAbrir(
 private val dataBrOrcamentoEquipe = DateTimeFormatter.ofPattern("dd/MM/uuuu")
     .withResolverStyle(ResolverStyle.STRICT)
 
+private val dataHoraPedido = DateTimeFormatter.ofPattern("dd/MM/uuuu 'às' HH:mm")
+
 private fun exibirDataOrcamentoEquipe(data: String): String =
     runCatching { LocalDate.parse(data).format(dataBrOrcamentoEquipe) }
         .getOrDefault(data)
+
+private fun exibirDataPedido(data: String): String =
+    runCatching {
+        OffsetDateTime.parse(data)
+            .atZoneSameInstant(ZoneId.systemDefault())
+            .format(dataHoraPedido)
+    }.getOrDefault(data)
+
+private fun formatarCpfOrcamento(cpf: String): String =
+    "${cpf.substring(0, 3)}.${cpf.substring(3, 6)}.${cpf.substring(6, 9)}-${cpf.substring(9)}"
 
 @Composable
 fun TelaOrcamentos(aoVoltar: () -> Unit) {
     var pagina by remember { mutableStateOf(PaginaOrcamentos.MENU) }
     var aberto by remember { mutableStateOf<OrcamentoParaAbrir?>(null) }
+    var pedidoSelecionado by remember { mutableStateOf<PedidoRecebido?>(null) }
 
     val orcamento = aberto
     if (orcamento != null) {
@@ -144,6 +191,7 @@ fun TelaOrcamentos(aoVoltar: () -> Unit) {
             aoVoltar = {
                 aberto = null
                 if (pagina == PaginaOrcamentos.NOVO) {
+                    pedidoSelecionado = null
                     pagina = PaginaOrcamentos.ANALISE
                 }
             }
@@ -152,30 +200,79 @@ fun TelaOrcamentos(aoVoltar: () -> Unit) {
     }
 
     when (pagina) {
-        PaginaOrcamentos.MENU -> Column(
-            modifier = Modifier.fillMaxSize().safeDrawingPadding().padding(16.dp),
+        PaginaOrcamentos.MENU -> LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .safeDrawingPadding(),
+            contentPadding = PaddingValues(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("Orçamentos", style = MaterialTheme.typography.headlineMedium)
+            item { CabecalhoOrcamentosEquipe("Orçamentos") }
 
-            listOf(
-                PaginaOrcamentos.NOVO,
-                PaginaOrcamentos.ANALISE,
-                PaginaOrcamentos.APROVADOS
-            ).forEach { destino ->
-                Button(
-                    onClick = { pagina = destino },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text(destino.titulo) }
+            val destinos = listOf(
+                PaginaOrcamentos.PEDIDOS to "Abra o pedido médico e inicie um orçamento.",
+                PaginaOrcamentos.NOVO to "Crie um orçamento ou retome uma composição.",
+                PaginaOrcamentos.ANALISE to "Consulte os orçamentos que aguardam aceite.",
+                PaginaOrcamentos.APROVADOS to "Consulte os orçamentos com aceite registrado."
+            )
+
+            items(destinos, key = { it.first.name }) { (destino, descricao) ->
+                OutlinedCard(
+                    onClick = {
+                        pedidoSelecionado = null
+                        pagina = destino
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium,
+                    colors = CardDefaults.outlinedCardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = destino.titulo,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = descricao,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
 
-            OutlinedButton(onClick = aoVoltar, modifier = Modifier.fillMaxWidth()) {
-                Text("Voltar")
+            item {
+                OutlinedButton(onClick = aoVoltar, modifier = Modifier.fillMaxWidth()) {
+                    Text("Voltar")
+                }
             }
         }
 
-        PaginaOrcamentos.NOVO -> FormularioNovoOrcamentoEquipe(
+        PaginaOrcamentos.PEDIDOS -> TelaPedidosRecebidos(
             aoVoltar = { pagina = PaginaOrcamentos.MENU },
+            aoIniciar = {
+                pedidoSelecionado = it
+                pagina = PaginaOrcamentos.NOVO
+            }
+        )
+
+        PaginaOrcamentos.NOVO -> FormularioNovoOrcamentoEquipe(
+            pedido = pedidoSelecionado,
+            aoVoltar = {
+                pagina = if (pedidoSelecionado == null) {
+                    PaginaOrcamentos.MENU
+                } else {
+                    PaginaOrcamentos.PEDIDOS
+                }
+                pedidoSelecionado = null
+            },
             aoRetomar = { pagina = PaginaOrcamentos.RASCUNHOS },
             aoAbrir = { aberto = it }
         )
@@ -195,7 +292,242 @@ fun TelaOrcamentos(aoVoltar: () -> Unit) {
 }
 
 @Composable
+private fun TelaPedidosRecebidos(
+    aoVoltar: () -> Unit,
+    aoIniciar: (PedidoRecebido) -> Unit
+) {
+    val cliente = SupabaseConfig.client
+    var pagina by remember { mutableIntStateOf(0) }
+    var recarga by remember { mutableIntStateOf(0) }
+    var carregando by remember { mutableStateOf(true) }
+    var erro by remember { mutableStateOf("") }
+    var pedidos by remember { mutableStateOf(emptyList<PedidoRecebido>()) }
+    var temProximaPagina by remember { mutableStateOf(false) }
+    var pedidoAberto by remember { mutableStateOf<PedidoRecebido?>(null) }
+
+    LaunchedEffect(pagina, recarga) {
+        carregando = true
+        erro = ""
+        pedidos = emptyList()
+        temProximaPagina = false
+
+        try {
+            val resultado = cliente.postgrest.rpc(
+                "listar_pedidos_recebidos",
+                buildJsonObject { put("p_pagina", pagina) }
+            ).decodeList<PedidoRecebido>()
+
+            pedidos = resultado.take(25)
+            temProximaPagina = resultado.size > 25
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val detalhe = e.message.orEmpty()
+            erro = when {
+                "PGRST202" in detalhe ->
+                    "A função de pedidos recebidos ainda não está disponível no Supabase."
+                "42501" in detalhe ->
+                    "Sua conta não tem permissão para consultar os pedidos recebidos."
+                else -> "Não foi possível carregar os pedidos recebidos."
+            }
+        } finally {
+            carregando = false
+        }
+    }
+
+    val pedido = pedidoAberto
+    val voltar: () -> Unit = {
+        if (pedidoAberto != null) pedidoAberto = null else aoVoltar()
+    }
+    BackHandler { voltar() }
+
+    if (pedido != null) {
+        FotoPedidoRecebido(
+            pedido = pedido,
+            aoVoltar = voltar,
+            aoIniciar = { aoIniciar(pedido) }
+        )
+        return
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .safeDrawingPadding(),
+        contentPadding = PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            CabecalhoOrcamentosEquipe("Pedidos recebidos")
+
+            TextButton(
+                onClick = {
+                    pagina = 0
+                    recarga++
+                },
+                enabled = !carregando
+            ) { Text("Atualizar") }
+
+            when {
+                carregando -> CircularProgressIndicator()
+                erro.isNotBlank() -> AvisoOrcamentosEquipe(erro, erro = true)
+                pedidos.isEmpty() && pagina == 0 ->
+                    AvisoOrcamentosEquipe("Nenhum pedido aguardando orçamento.")
+                pedidos.isEmpty() -> AvisoOrcamentosEquipe("Nenhum pedido nesta página.")
+            }
+        }
+
+        items(pedidos, key = { it.id }) { registro ->
+            OutlinedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.medium
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = registro.paciente().rotulo(),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Recebido em ${exibirDataPedido(registro.criado_em)}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    TextButton(onClick = { pedidoAberto = registro }) {
+                        Text("Abrir pedido")
+                    }
+                }
+            }
+        }
+
+        item {
+            if (pagina > 0 || temProximaPagina) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = { pagina-- },
+                        enabled = pagina > 0 && !carregando
+                    ) { Text("Anterior") }
+
+                    TextButton(
+                        onClick = { pagina++ },
+                        enabled = temProximaPagina && !carregando
+                    ) { Text("Próxima") }
+                }
+            }
+
+            OutlinedButton(onClick = voltar, modifier = Modifier.fillMaxWidth()) {
+                Text("Voltar")
+            }
+        }
+    }
+}
+
+@Composable
+private fun FotoPedidoRecebido(
+    pedido: PedidoRecebido,
+    aoVoltar: () -> Unit,
+    aoIniciar: () -> Unit
+) {
+    val cliente = SupabaseConfig.client
+    var imagem by remember(pedido.id) { mutableStateOf<ImageBitmap?>(null) }
+    var recarga by remember(pedido.id) { mutableIntStateOf(0) }
+    var carregando by remember(pedido.id) { mutableStateOf(true) }
+    var erro by remember(pedido.id) { mutableStateOf("") }
+
+    LaunchedEffect(pedido.id, recarga) {
+        carregando = true
+        erro = ""
+        imagem = null
+
+        try {
+            val caminho = pedido.foto_path.removePrefix("pedidos-medicos/")
+            val bytes = cliente.storage.from("pedidos-medicos")
+                .downloadAuthenticated(caminho)
+
+            imagem = withContext(Dispatchers.Default) {
+                val opcoes = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opcoes)
+
+                require(opcoes.outWidth > 0 && opcoes.outHeight > 0)
+                var escala = 1
+                while (maxOf(opcoes.outWidth, opcoes.outHeight) / escala > 2400) {
+                    escala *= 2
+                }
+
+                opcoes.inJustDecodeBounds = false
+                opcoes.inSampleSize = escala
+                checkNotNull(BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opcoes))
+                    .asImageBitmap()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            erro = "Não foi possível abrir a foto do pedido médico."
+        } finally {
+            carregando = false
+        }
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .safeDrawingPadding(),
+        contentPadding = PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item { CabecalhoOrcamentosEquipe("Pedido médico") }
+
+        item {
+            Text(pedido.paciente().rotulo(), style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Recebido em ${exibirDataPedido(pedido.criado_em)}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        item {
+            val foto = imagem
+            when {
+                carregando -> CircularProgressIndicator()
+                foto != null -> OutlinedCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Image(
+                        bitmap = foto,
+                        contentDescription = "Foto do pedido médico",
+                        modifier = Modifier.fillMaxWidth()
+                            .aspectRatio(foto.width.toFloat() / foto.height)
+                    )
+                }
+                erro.isNotBlank() -> {
+                    AvisoOrcamentosEquipe(erro, erro = true)
+                    TextButton(onClick = { recarga++ }) { Text("Tentar novamente") }
+                }
+            }
+        }
+
+        item {
+            Button(
+                onClick = aoIniciar,
+                enabled = imagem != null && !carregando,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
+            ) { Text("Iniciar orçamento") }
+
+            OutlinedButton(onClick = aoVoltar, modifier = Modifier.fillMaxWidth()) {
+                Text("Voltar aos pedidos")
+            }
+        }
+    }
+}
+
+@Composable
 private fun FormularioNovoOrcamentoEquipe(
+    pedido: PedidoRecebido?,
     aoVoltar: () -> Unit,
     aoRetomar: () -> Unit,
     aoAbrir: (OrcamentoParaAbrir) -> Unit
@@ -203,7 +535,11 @@ private fun FormularioNovoOrcamentoEquipe(
     val cliente = SupabaseConfig.client
     val escopo = rememberCoroutineScope()
 
-    var paciente by remember { mutableStateOf<OpcaoOrcamentoEquipe?>(null) }
+    var paciente by remember(pedido?.id) {
+        mutableStateOf(
+            pedido?.paciente()?.let { OpcaoOrcamentoEquipe(it.id, it.nome_completo, it.rotulo()) }
+        )
+    }
     var cirurgiao by remember { mutableStateOf<OpcaoOrcamentoEquipe?>(null) }
     var anestesista by remember { mutableStateOf<OpcaoOrcamentoEquipe?>(null) }
     var procedimento by remember { mutableStateOf<OpcaoOrcamentoEquipe?>(null) }
@@ -231,56 +567,72 @@ private fun FormularioNovoOrcamentoEquipe(
             .map { OpcaoOrcamentoEquipe(it.id, it.nome, it.rotulo()) }
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize().safeDrawingPadding().imePadding(),
-        contentPadding = PaddingValues(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .safeDrawingPadding()
+            .imePadding(),
+        contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Text("Novo orçamento", style = MaterialTheme.typography.headlineMedium)
-            TextButton(onClick = aoRetomar, enabled = !salvando) {
-                Text("Retomar composição pelo CPF")
-            }
-        }
+            CabecalhoOrcamentosEquipe("Novo orçamento")
 
-        item {
-            CampoBuscaEquipe("Nome ou CPF do paciente", paciente, { paciente = it }, !salvando) { termo ->
-                val digitos = termo.filter { it in '0'..'9' }
-                val buscaPorCpf = termo.all { it in '0'..'9' || it in ".- " }
-
-                if (buscaPorCpf && digitos.length != 11) {
-                    throw IllegalArgumentException("Informe os 11 dígitos do CPF.")
+            if (pedido == null) {
+                TextButton(onClick = aoRetomar, enabled = !salvando) {
+                    Text("Retomar composição pelo CPF")
                 }
+            } else {
+                Spacer(Modifier.height(12.dp))
+                AvisoOrcamentosEquipe("Paciente do pedido: ${pedido.paciente().rotulo()}")
+            }
+        }
 
-                cliente.from("pacientes")
-                    .select(Columns.raw("id,nome_completo,cpf")) {
-                        filter {
-                            eq("ativo", true)
-                            if (buscaPorCpf) {
-                                val formatado = formatarCpfOrcamento(digitos)
-                                or {
-                                    eq("cpf", digitos)
-                                    eq("cpf", formatado)
-                                }
-                            } else {
-                                ilike("nome_completo", "%$termo%")
-                            }
-                        }
-                        limit(8)
+        if (pedido == null) {
+            item {
+                CampoBuscaEquipe(
+                    "Nome ou CPF do paciente",
+                    paciente,
+                    { paciente = it },
+                    !salvando
+                ) { termo ->
+                    val digitos = termo.filter { it in '0'..'9' }
+                    val buscaPorCpf = termo.all { it in '0'..'9' || it in ".- " }
+
+                    if (buscaPorCpf && digitos.length != 11) {
+                        throw IllegalArgumentException("Informe os 11 dígitos do CPF.")
                     }
-                    .decodeList<PacienteDoOrcamento>()
-                    .map { OpcaoOrcamentoEquipe(it.id, it.nome_completo, it.rotulo()) }
+
+                    cliente.from("pacientes")
+                        .select(Columns.raw("id,nome_completo,cpf")) {
+                            filter {
+                                eq("ativo", true)
+                                if (buscaPorCpf) {
+                                    or {
+                                        eq("cpf", digitos)
+                                        eq("cpf", formatarCpfOrcamento(digitos))
+                                    }
+                                } else {
+                                    ilike("nome_completo", "%$termo%")
+                                }
+                            }
+                            limit(8)
+                        }
+                        .decodeList<PacienteDoOrcamento>()
+                        .map { OpcaoOrcamentoEquipe(it.id, it.nome_completo, it.rotulo()) }
+                }
             }
         }
 
         item {
-            CampoBuscaEquipe("Cirurgião", cirurgiao, { cirurgiao = it }, !salvando) {
-                buscarMedico(it, "cirurgiao")
+            CampoBuscaEquipe("Cirurgião", cirurgiao, { cirurgiao = it }, !salvando) { termo ->
+                buscarMedico(termo, "cirurgiao")
             }
         }
 
         item {
-            CampoBuscaEquipe("Anestesista", anestesista, { anestesista = it }, !salvando) {
-                buscarMedico(it, "anestesista")
+            CampoBuscaEquipe("Anestesista", anestesista, { anestesista = it }, !salvando) { termo ->
+                buscarMedico(termo, "anestesista")
             }
         }
 
@@ -318,6 +670,8 @@ private fun FormularioNovoOrcamentoEquipe(
                 modifier = Modifier.fillMaxWidth()
             )
 
+            Spacer(Modifier.height(8.dp))
+
             OutlinedTextField(
                 value = descricao,
                 onValueChange = { descricao = it },
@@ -328,36 +682,51 @@ private fun FormularioNovoOrcamentoEquipe(
         }
 
         item {
-            Text("Tipo de hospedagem", style = MaterialTheme.typography.titleMedium)
-            listOf("Enfermaria", "Apartamento Individual", "Apartamento Duplo").forEach { opcao ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(
-                        selected = hospedagem == opcao,
-                        onClick = { hospedagem = opcao },
-                        enabled = !salvando
+            OutlinedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.medium
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Tipo de hospedagem",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
                     )
-                    Text(opcao)
-                }
-            }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(
-                    checked = necessitaUti,
-                    onCheckedChange = { necessitaUti = it },
-                    enabled = !salvando
-                )
-                Text("Necessita de UTI")
+                    listOf("Enfermaria", "Apartamento Individual", "Apartamento Duplo").forEach { opcao ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = hospedagem == opcao,
+                                onClick = { hospedagem = opcao },
+                                enabled = !salvando
+                            )
+                            Text(opcao)
+                        }
+                    }
+
+                    HorizontalDivider()
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = necessitaUti,
+                            onCheckedChange = { necessitaUti = it },
+                            enabled = !salvando
+                        )
+                        Text("Necessita de UTI")
+                    }
+                }
             }
         }
 
         item {
             if (mensagem.isNotBlank()) {
-                Text(mensagem, color = MaterialTheme.colorScheme.error)
+                AvisoOrcamentosEquipe(mensagem, erro = true)
+                Spacer(Modifier.height(8.dp))
             }
 
             Button(
                 enabled = !salvando,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
                 onClick = {
                     val pessoa = paciente
                     val cirurgiaoId = cirurgiao?.id
@@ -394,11 +763,13 @@ private fun FormularioNovoOrcamentoEquipe(
                         hospedagem = hospedagem,
                         necessita_uti = necessitaUti,
                         criado_por = usuarioId,
-                        status = "Pendente"
+                        status = "Pendente",
+                        pedido_medico_id = pedido?.id
                     )
 
                     salvando = true
                     mensagem = ""
+
                     escopo.launch {
                         try {
                             val criado = cliente.from("orcamentos")
@@ -408,8 +779,15 @@ private fun FormularioNovoOrcamentoEquipe(
                             aoAbrir(OrcamentoParaAbrir(criado.id, pessoa.nome, cirurgia.nome))
                         } catch (e: CancellationException) {
                             throw e
-                        } catch (_: Exception) {
-                            mensagem = "A gravação não foi confirmada. Confira em Retomar composição antes de tentar novamente."
+                        } catch (e: Exception) {
+                            val detalhe = e.message.orEmpty()
+                            mensagem = if (
+                                pedido != null && "orcamentos_pedido_medico_ux" in detalhe
+                            ) {
+                                "Este pedido já está vinculado a um orçamento. Consulte Retomar composição ou Orçamentos em análise."
+                            } else {
+                                "A gravação não foi confirmada. Confira em Retomar composição antes de tentar novamente."
+                            }
                         } finally {
                             salvando = false
                         }
@@ -427,9 +805,6 @@ private fun FormularioNovoOrcamentoEquipe(
         }
     }
 }
-
-private fun formatarCpfOrcamento(cpf: String): String =
-    "${cpf.substring(0, 3)}.${cpf.substring(3, 6)}.${cpf.substring(6, 9)}-${cpf.substring(9)}"
 
 @Composable
 private fun CampoBuscaEquipe(
@@ -477,7 +852,13 @@ private fun CampoBuscaEquipe(
             singleLine = true
         )
 
-        if (mensagem.isNotBlank()) Text(mensagem)
+        if (mensagem.isNotBlank()) {
+            Text(
+                text = mensagem,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
 
         sugestoes.forEach { opcao ->
             OutlinedButton(
@@ -500,14 +881,76 @@ private fun ListaOrcamentosEquipe(
     aoAbrir: (OrcamentoParaAbrir) -> Unit
 ) {
     val cliente = SupabaseConfig.client
+    val escopo = rememberCoroutineScope()
     var cpf by remember { mutableStateOf("") }
     var cpfConsultado by remember { mutableStateOf<String?>(null) }
     var busca by remember { mutableIntStateOf(0) }
     var carregando by remember { mutableStateOf(false) }
     var mensagem by remember { mutableStateOf("") }
     var registros by remember { mutableStateOf(emptyList<OrcamentoDaEquipe>()) }
+    var registroParaExcluir by remember { mutableStateOf<OrcamentoDaEquipe?>(null) }
+    var excluindo by remember { mutableStateOf(false) }
+    var mensagemExclusao by remember { mutableStateOf("") }
 
-    BackHandler { aoVoltar() }
+    val voltar: () -> Unit = {
+        when {
+            excluindo -> Unit
+            registroParaExcluir != null -> registroParaExcluir = null
+            else -> aoVoltar()
+        }
+    }
+    BackHandler { voltar() }
+
+    fun excluirOrcamento(registro: OrcamentoDaEquipe) {
+        if (excluindo || carregando) return
+        excluindo = true
+        mensagemExclusao = ""
+
+        escopo.launch {
+            try {
+                cliente.postgrest.rpc(
+                    "gerenciar_orcamento",
+                    buildJsonObject {
+                        put("p_orcamento_id", registro.id)
+                        put("p_acao", "excluir")
+                    }
+                )
+
+                val aindaExiste = cliente.from("orcamentos")
+                    .select(Columns.raw("id")) {
+                        filter { eq("id", registro.id) }
+                    }
+                    .decodeList<IdOrcamentoCriado>()
+                    .isNotEmpty()
+
+                if (aindaExiste) {
+                    mensagemExclusao = "O Supabase ainda retorna este orçamento. Confira o status."
+                    return@launch
+                }
+
+                registros = registros.filterNot { it.id == registro.id }
+                if (registros.isEmpty()) {
+                    mensagem = "Nenhum orçamento nesta situação para esse CPF."
+                }
+                mensagemExclusao = "Orçamento excluído com sucesso."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val detalhe = e.message.orEmpty()
+                mensagemExclusao = when {
+                    "PGRST202" in detalhe ->
+                        "A função de exclusão não foi encontrada no Supabase (PGRST202)."
+                    "42501" in detalhe ->
+                        "Sua conta não tem permissão para excluir este orçamento (42501)."
+                    else ->
+                        "Não foi possível confirmar a exclusão. Busque novamente para conferir o status."
+                }
+            } finally {
+                registroParaExcluir = null
+                excluindo = false
+            }
+        }
+    }
 
     LaunchedEffect(pagina, busca) {
         val digitos = cpfConsultado ?: return@LaunchedEffect
@@ -536,7 +979,6 @@ private fun ListaOrcamentosEquipe(
                 return@LaunchedEffect
             }
 
-            val pacienteId = pacientes.single().id
             val encontrados = cliente.from("orcamentos")
                 .select(
                     Columns.raw(
@@ -547,7 +989,7 @@ private fun ListaOrcamentosEquipe(
                     )
                 ) {
                     filter {
-                        eq("paciente_id", pacienteId)
+                        eq("paciente_id", pacientes.single().id)
                         if (pagina == PaginaOrcamentos.APROVADOS) {
                             eq("status", "Aceito")
                         } else {
@@ -560,11 +1002,11 @@ private fun ListaOrcamentosEquipe(
                 }
                 .decodeList<OrcamentoDaEquipe>()
 
-            registros = encontrados.filter { orcamento ->
+            registros = encontrados.filter { registro ->
                 when (pagina) {
                     PaginaOrcamentos.APROVADOS -> true
-                    PaginaOrcamentos.RASCUNHOS -> !orcamento.composicaoFoiSalva()
-                    else -> orcamento.composicaoFoiSalva()
+                    PaginaOrcamentos.RASCUNHOS -> !registro.composicaoFoiSalva()
+                    else -> registro.composicaoFoiSalva()
                 }
             }.sortedByDescending { it.data_prevista }
 
@@ -579,68 +1021,99 @@ private fun ListaOrcamentosEquipe(
     }
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize().safeDrawingPadding().imePadding(),
-        contentPadding = PaddingValues(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .safeDrawingPadding()
+            .imePadding(),
+        contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Text(pagina.titulo, style = MaterialTheme.typography.headlineMedium)
+            CabecalhoOrcamentosEquipe(pagina.titulo)
+        }
 
-            OutlinedTextField(
-                value = cpf,
-                onValueChange = {
-                    cpf = it
-                    cpfConsultado = null
-                    busca++
-                    registros = emptyList()
-                    mensagem = ""
-                },
-                label = { Text("CPF do paciente") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Button(
-                enabled = !carregando,
+        item {
+            OutlinedCard(
                 modifier = Modifier.fillMaxWidth(),
-                onClick = {
-                    val digitos = cpf.filter { it in '0'..'9' }
-                    if (digitos.length != 11) {
-                        mensagem = "Informe os 11 dígitos do CPF."
-                    } else {
-                        cpfConsultado = digitos
-                        busca++
-                    }
-                }
-            ) { Text("Buscar orçamentos") }
+                shape = MaterialTheme.shapes.medium
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedTextField(
+                        value = cpf,
+                        enabled = !excluindo,
+                        onValueChange = {
+                            cpf = it
+                            cpfConsultado = null
+                            registroParaExcluir = null
+                            busca++
+                            registros = emptyList()
+                            mensagem = ""
+                            mensagemExclusao = ""
+                        },
+                        label = { Text("CPF do paciente") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
 
-            if (carregando) CircularProgressIndicator()
-            if (mensagem.isNotBlank()) Text(mensagem)
+                    Button(
+                        enabled = !carregando && !excluindo,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            registroParaExcluir = null
+                            mensagemExclusao = ""
+                            val digitos = cpf.filter { it in '0'..'9' }
+                            if (digitos.length != 11) {
+                                mensagem = "Informe os 11 dígitos do CPF."
+                            } else {
+                                cpfConsultado = digitos
+                                busca++
+                            }
+                        }
+                    ) { Text("Buscar orçamentos") }
+
+                    if (carregando) CircularProgressIndicator()
+                    if (mensagem.isNotBlank()) AvisoOrcamentosEquipe(mensagem)
+                    if (mensagemExclusao.isNotBlank()) AvisoOrcamentosEquipe(mensagemExclusao)
+                }
+            }
         }
 
         items(registros, key = { it.id }) { registro ->
             val nomePaciente = registro.paciente?.nome_completo ?: "Paciente indisponível"
             val nomeProcedimento = registro.procedimento?.nome ?: "Procedimento indisponível"
 
-            Card(Modifier.fillMaxWidth()) {
+            OutlinedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.medium
+            ) {
                 Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(nomePaciente, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = nomePaciente,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
                     Text(nomeProcedimento)
-
-                    registro.status?.let { Text("Status: $it") }
+                    registro.status?.let { EtiquetaSituacaoOrcamento(it) }
                     registro.data_prevista?.let {
-                        Text("Data prevista: ${exibirDataOrcamentoEquipe(it)}")
+                        Text(
+                            text = "Data prevista: ${exibirDataOrcamentoEquipe(it)}",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
 
-                    TextButton(
+                    OutlinedButton(
+                        enabled = !excluindo,
+                        modifier = Modifier.fillMaxWidth(),
                         onClick = {
-                            aoAbrir(
-                                OrcamentoParaAbrir(registro.id, nomePaciente, nomeProcedimento)
-                            )
+                            aoAbrir(OrcamentoParaAbrir(registro.id, nomePaciente, nomeProcedimento))
                         }
                     ) {
                         Text(
@@ -648,14 +1121,108 @@ private fun ListaOrcamentosEquipe(
                             else "Ver orçamento"
                         )
                     }
+
+                    if (pagina == PaginaOrcamentos.ANALISE &&
+                        (registro.status == "Pendente" || registro.status == "Em espera")
+                    ) {
+                        if (registroParaExcluir?.id == registro.id) {
+                            AvisoOrcamentosEquipe(
+                                "Excluir definitivamente este orçamento e sua composição?",
+                                erro = true
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(
+                                    onClick = { excluirOrcamento(registro) },
+                                    enabled = !carregando && !excluindo,
+                                    colors = ButtonDefaults.textButtonColors(
+                                        contentColor = MaterialTheme.colorScheme.error
+                                    )
+                                ) {
+                                    Text(if (excluindo) "Excluindo…" else "Confirmar exclusão")
+                                }
+                                TextButton(
+                                    onClick = { registroParaExcluir = null },
+                                    enabled = !excluindo
+                                ) { Text("Cancelar") }
+                            }
+                        } else {
+                            TextButton(
+                                onClick = { registroParaExcluir = registro },
+                                enabled = !carregando && !excluindo,
+                                colors = ButtonDefaults.textButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.error
+                                )
+                            ) {
+                                Text("Excluir orçamento")
+                            }
+                        }
+                    }
                 }
             }
         }
 
         item {
-            OutlinedButton(onClick = aoVoltar, modifier = Modifier.fillMaxWidth()) {
-                Text("Voltar")
-            }
+            OutlinedButton(
+                onClick = voltar,
+                enabled = !excluindo,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Voltar") }
         }
+    }
+}
+
+@Composable
+private fun CabecalhoOrcamentosEquipe(titulo: String) {
+    Text(
+        text = titulo,
+        modifier = Modifier.fillMaxWidth()
+            .background(
+                brush = Brush.linearGradient(
+                    listOf(Color(0xFF10345E), Color(0xFF064FB5))
+                ),
+                shape = MaterialTheme.shapes.large
+            )
+            .padding(horizontal = 18.dp, vertical = 16.dp)
+            .semantics { heading() },
+        style = MaterialTheme.typography.headlineSmall,
+        fontWeight = FontWeight.Bold,
+        color = Color.White
+    )
+}
+
+@Composable
+private fun AvisoOrcamentosEquipe(texto: String, erro: Boolean = false) {
+    val cores = MaterialTheme.colorScheme
+
+    Surface(
+        modifier = Modifier.fillMaxWidth()
+            .semantics { liveRegion = LiveRegionMode.Polite },
+        shape = MaterialTheme.shapes.small,
+        color = if (erro) cores.errorContainer else cores.primaryContainer,
+        contentColor = if (erro) cores.onErrorContainer else cores.onPrimaryContainer
+    ) {
+        Text(
+            text = texto,
+            modifier = Modifier.padding(12.dp),
+            style = MaterialTheme.typography.bodyMedium
+        )
+    }
+}
+
+@Composable
+private fun EtiquetaSituacaoOrcamento(situacao: String) {
+    val cores = MaterialTheme.colorScheme
+    val aceito = situacao == "Aceito"
+
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = if (aceito) cores.tertiaryContainer else cores.secondaryContainer,
+        contentColor = if (aceito) cores.onTertiaryContainer else cores.onSecondaryContainer
+    ) {
+        Text(
+            text = situacao,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            style = MaterialTheme.typography.labelLarge
+        )
     }
 }
